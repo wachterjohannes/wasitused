@@ -9,7 +9,7 @@
     "timeoutMs": 60000
   },
   "agent": {
-    "model": "claude-opus-5",
+    "model": "claude-sonnet-5",
     "maxTurns": 30,
     "timeoutMs": 600000
   },

@@ -167,6 +167,12 @@ cut or redesign the ones that fail. Never "run it anyway" — a scenario that
 fails the gate spends the full batch to tell you nothing. Piloting costs ~20
 runs; skipping it costs ~80.
 
+**The gate is a property of the scenario *and* the model, not the scenario
+alone.** The bundled `greeting-locale` example sits at a 2/5 baseline on one
+model and a 0/5 baseline — a floor — on another, with nothing about the scenario
+changed. Re-pilot when you change the model you measure with; a scenario that
+passed the gate a model ago is not evidence that it still does.
+
 Scenarios marked `toolRelevant: false` are exempt from the gate. Their job is to
 count invocations where the tool cannot help, so a ceiling pass rate is expected
 and fine.

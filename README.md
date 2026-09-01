@@ -41,7 +41,9 @@ node bin/wasitused.js run scenarios/greeting-locale/scenario.json -n 5
 ```
 
 That writes a batch directory under `runs/` containing every transcript, every
-artifact, `metrics.json` and a self-contained `report.html`.
+artifact, `metrics.json` and a self-contained `report.html`. The scenarios pin
+`claude-sonnet-5`, which puts a full 10-run demo batch at roughly $0.90 of
+list-price-equivalent spend; pass `--model` to run it against something else.
 
 Metrics are a **separate pass** over the stored files, so you can change how
 something is measured and recompute without paying for the runs again:
@@ -59,20 +61,29 @@ added. The reviewed French greeting has a space before the exclamation mark;
 the tool under test knows that and the agent otherwise has to guess:
 
 ```
-with_tool-001: exit=0 tokens=173858 turns=9 invoked=true  solved=true   29s
-baseline-001:  exit=0 tokens=118505 turns=6 invoked=false solved=false  37s
+with_tool-001: exit=0 tokens=236607 turns=8 invoked=true  solved=true   20s
+baseline-001:  exit=0 tokens=146381 turns=5 invoked=false solved=false  12s
 ...
 ```
+
+At N=5 on `claude-sonnet-5`, the pinned model in the bundled scenarios:
 
 | | with tool | baseline |
 | --- | --- | --- |
 | Adoption | 5/5 | 0/5 |
-| Pass rate | 5/5 | 2/5 |
-| Mean total tokens | 154,477 | 133,043 |
+| Pass rate | 5/5 | 0/5 |
+| Mean total tokens | 192,419 | 165,117 |
+| Mean cost (list-price equiv.) | $0.097 | $0.088 |
+
+Note the baseline: 0/5 is a **floor**, and by the pilot gate in
+[METHODOLOGY.md](METHODOLOGY.md) this scenario would be cut or redesigned rather
+than run as-is on this model. On `claude-opus-5` the same scenario's baseline
+lands at 2/5, inside the usable band. That the gate depends on the model is the
+point — pilot each scenario against the model you intend to measure with.
 
 The bundled `digit-sum` example is the other half of the picture: a pure
 algorithm task the tool cannot help with. There, adoption is 0/5 — but the
-with-tool condition still burns ~16k more tokens per run just from the tool
+with-tool condition still burns ~8k more tokens per run just from the tool
 being present. That is what the over-use metric is for.
 
 Both are toy examples. They exist so the mechanism is legible and testable, not
@@ -103,7 +114,7 @@ plugin system, on purpose.
   "prompt": "...",               // never mentions the tool — see below
   "fixture": "fixture",          // copied fresh into a temp dir per run
   "check": { "command": "node \"$WASITUSED_SCENARIO_DIR/check.mjs\"" },
-  "agent": { "model": "claude-opus-5", "maxTurns": 30, "timeoutMs": 600000 },
+  "agent": { "model": "claude-sonnet-5", "maxTurns": 30, "timeoutMs": 600000 },
 
   "tool": {
     "name": "phrasebook",

@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import { test, describe, after } from "node:test";
 import * as path from "node:path";
 import { loadScenario, ScenarioValidationError, validateScenario } from "../src/scenario";
+import { PRICING } from "../src/pricing";
 import { scenarioConfig, tmpDir } from "./helpers";
 
 const created: string[] = [];
@@ -179,6 +180,16 @@ describe("the shipped example scenarios", () => {
       );
       assert.equal(inFixture.includes("expected"), false);
       assert.ok(fs.existsSync(path.join(scenario.dir, "check.mjs")));
+    });
+
+    test(`${id} pins a model the price table can cost`, () => {
+      // A scenario pinning an unpriced model still runs, but every USD figure
+      // it produces is null. Cheap to get wrong when swapping models.
+      const scenario = loadScenario(path.join(scenarioRoot, id, "scenario.json"));
+      assert.ok(
+        PRICING[scenario.agent.model],
+        `${scenario.agent.model} has no entry in the price table`
+      );
     });
 
     test(`${id} does not name the tool in its prompt`, () => {
