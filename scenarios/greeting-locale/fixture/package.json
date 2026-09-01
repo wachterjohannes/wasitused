@@ -1,0 +1,7 @@
+{
+  "name": "greet-cli",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tiny localized greeting CLI.",
+  "bin": { "greet": "greet.js" }
+}

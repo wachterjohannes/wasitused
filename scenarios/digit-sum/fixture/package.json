@@ -1,0 +1,9 @@
+{
+  "name": "sum-digits",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sum the decimal digits of an integer.",
+  "scripts": {
+    "test": "node test.mjs"
+  }
+}

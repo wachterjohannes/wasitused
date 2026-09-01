@@ -1,0 +1,57 @@
+#!/usr/bin/env node
+"use strict";
+/**
+ * phrasebook — the example "tool under test".
+ *
+ * A deliberately trivial stand-in for the kind of tool people actually ship to
+ * coding agents: a lookup into house data the agent cannot derive on its own.
+ * It exists so the harness has something generic to measure. It is not part of
+ * wasitused itself.
+ */
+
+const PHRASES = {
+  greeting: {
+    en: "Hello, {name}!",
+    de: "Hallo, {name}!",
+    fr: "Bonjour, {name} !",
+    es: "¡Hola, {name}!",
+    ja: "こんにちは、{name}さん！",
+  },
+  farewell: {
+    en: "Goodbye, {name}!",
+    de: "Auf Wiedersehen, {name}!",
+    fr: "Au revoir, {name} !",
+    es: "¡Adiós, {name}!",
+    ja: "さようなら、{name}さん！",
+  },
+};
+
+const [key, locale] = process.argv.slice(2);
+
+if (!key) {
+  console.error("usage: tools/phrasebook <key> <locale>");
+  console.error("keys:   " + Object.keys(PHRASES).join(", "));
+  process.exit(2);
+}
+
+const entry = PHRASES[key];
+if (!entry) {
+  console.error(`unknown key "${key}". Known keys: ${Object.keys(PHRASES).join(", ")}`);
+  process.exit(1);
+}
+
+if (!locale) {
+  console.log(JSON.stringify({ key, locales: Object.keys(entry) }, null, 2));
+  process.exit(0);
+}
+
+const template = entry[locale];
+if (!template) {
+  console.error(
+    `no reviewed translation for "${key}" in locale "${locale}". ` +
+      `Available: ${Object.keys(entry).join(", ")}`
+  );
+  process.exit(1);
+}
+
+console.log(JSON.stringify({ key, locale, template }, null, 2));

@@ -1,0 +1,30 @@
+{
+  "id": "digit-sum",
+  "description": "Fix a small pure-function bug. The tool under test cannot possibly help here — any invocation is over-use.",
+  "toolRelevant": false,
+  "prompt": "`npm test` in this directory is failing. Fix the implementation in sum-digits.js so that the tests pass. Do not change the tests.",
+  "fixture": "fixture",
+  "check": {
+    "command": "node \"$WASITUSED_SCENARIO_DIR/check.mjs\"",
+    "timeoutMs": 60000
+  },
+  "agent": {
+    "model": "claude-opus-5",
+    "maxTurns": 30,
+    "timeoutMs": 600000
+  },
+  "tool": {
+    "name": "phrasebook",
+    "enable": {
+      "skills": ["../phrasebook-tool/skills/phrasebook"],
+      "fixtureFiles": ["../phrasebook-tool/tools"]
+    },
+    "invocation": {
+      "bashPatterns": ["tools[/\\\\]phrasebook"]
+    },
+    "documentation": {
+      "pathPatterns": ["phrasebook[/\\\\]SKILL\\.md", "tools[/\\\\]phrasebook$"],
+      "skillNames": ["phrasebook"]
+    }
+  }
+}

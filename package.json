@@ -1,0 +1,47 @@
+{
+  "name": "wasitused",
+  "version": "0.1.0",
+  "description": "Measure whether a coding agent actually invokes your tool — and whether invoking it helps.",
+  "license": "MIT",
+  "author": "Johannes Wachter",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wachterjohannes/wasitused.git"
+  },
+  "homepage": "https://github.com/wachterjohannes/wasitused#readme",
+  "bugs": {
+    "url": "https://github.com/wachterjohannes/wasitused/issues"
+  },
+  "keywords": [
+    "agent",
+    "eval",
+    "mcp",
+    "agent-skills",
+    "claude-code",
+    "benchmark",
+    "tool-adoption"
+  ],
+  "bin": {
+    "wasitused": "bin/wasitused.js"
+  },
+  "files": [
+    "bin/",
+    "dist/src/",
+    "scenarios/",
+    "README.md",
+    "METHODOLOGY.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}

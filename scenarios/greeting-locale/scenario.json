@@ -1,0 +1,30 @@
+{
+  "id": "greeting-locale",
+  "description": "Add a French locale to a tiny greeting CLI. The reviewed French template has a space before the exclamation mark, which the tool under test knows and the agent otherwise has to guess.",
+  "toolRelevant": true,
+  "prompt": "The greet CLI in this directory supports the locales in locales/. Add support for French (fr) so that `node greet.js fr World` prints this project's canonical French greeting, following the same file conventions as the existing locales.",
+  "fixture": "fixture",
+  "check": {
+    "command": "node \"$WASITUSED_SCENARIO_DIR/check.mjs\"",
+    "timeoutMs": 60000
+  },
+  "agent": {
+    "model": "claude-opus-5",
+    "maxTurns": 30,
+    "timeoutMs": 600000
+  },
+  "tool": {
+    "name": "phrasebook",
+    "enable": {
+      "skills": ["../phrasebook-tool/skills/phrasebook"],
+      "fixtureFiles": ["../phrasebook-tool/tools"]
+    },
+    "invocation": {
+      "bashPatterns": ["tools[/\\\\]phrasebook"]
+    },
+    "documentation": {
+      "pathPatterns": ["phrasebook[/\\\\]SKILL\\.md", "tools[/\\\\]phrasebook$"],
+      "skillNames": ["phrasebook"]
+    }
+  }
+}

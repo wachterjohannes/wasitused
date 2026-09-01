@@ -1,0 +1,235 @@
+# Methodology
+
+Why this harness measures what it measures, and why it refuses to measure some
+things at all.
+
+Most of what follows is not clever. It is a list of ways a tool-evaluation
+harness produces confident, clean-looking numbers that are wrong — and the
+specific thing this codebase does about each one. Every failure mode in here
+has a test in `test/` that deliberately triggers it and asserts the harness
+flags it rather than counting it.
+
+---
+
+## 1. Adoption is invocation, not exposure
+
+The question "does the agent use my tool?" has three different answers
+depending on where you draw the line:
+
+1. The tool was *available* to the agent.
+2. The agent *read about* the tool — loaded the skill, read the docs, saw the
+   tool description in its system prompt.
+3. The agent *called* the tool.
+
+Only (3) is adoption. (2) looks like adoption in a transcript if you are not
+careful, especially with Agent Skills, where loading the skill is itself a tool
+call. In the very first real run against the bundled example, the agent invoked
+the `Skill` tool to load a skill that merely *describes* a CLI, then separately
+ran the CLI. A parser that counted `Skill` as adoption would have been right by
+accident there and wrong for every tool whose skill is documentation only.
+
+So invocation and documentation are separate event kinds in the parser, matched
+by separate config, and validation rejects a scenario that puts the same skill
+in both. Build the distinction in on day one; retrofitting it means re-reading
+every transcript you have.
+
+**Corollary:** the scenario prompt must never mention the tool. If the prompt
+says "use the phrasebook", the adoption number measures instruction-following.
+The only difference between the two conditions should be whether the tool
+exists at all.
+
+## 2. Every effect must be conditioned on invocation
+
+This is the single most expensive mistake available in this space.
+
+You run 10 with-tool and 10 baseline. The with-tool condition costs 3.5× more.
+You write that down as "the tool is expensive". Then you check the transcripts
+and find the tool was invoked in 10/10 of one condition and 0/10 of the other —
+the entire effect was the invocation, not the tool's efficiency.
+
+So every delta this harness reports is accompanied by:
+
+- the invocation count in each condition, as a required field, not a footnote;
+- the delta computed over **all** usable with-tool runs, *and* over the subset
+  that actually invoked the tool, side by side;
+- an explicit note when invocation was 0, stating that no difference can be
+  attributed to the tool.
+
+The two deltas are shown together deliberately. When they diverge, that gap is
+the finding.
+
+The bundled `digit-sum` example shows the mirror case: adoption is 0/5, and the
+with-tool condition still burns ~16k more tokens per run purely because the
+tool's description is in the context. That is a real cost of shipping a tool —
+and it is emphatically not a cost *of calling* it. The report keeps those
+separable.
+
+## 3. Ground truth comes from the artifact, never from the agent
+
+Agents report success. They are wrong often enough, and confidently enough,
+that "the agent said it worked" is not a measurement.
+
+Every scenario's check runs against the working copy the agent left behind: it
+executes the CLI, imports the module, reads the file. It never parses the
+agent's summary.
+
+Two consequences the bundled examples demonstrate:
+
+- **Freeze the expectation.** What the check compares against is a fixed file
+  in the scenario directory, written once, not computed at run time. A check
+  that derives its own expected value can drift into agreeing with whatever the
+  agent produced.
+- **Keep the check away from the agent.** `check.mjs` and `expected/` live
+  outside `fixture/`, so the agent can neither read the answer nor edit its
+  own grader. The `digit-sum` fixture ships a *visible* test file so the task
+  reads naturally, but the real check runs a superset of frozen cases from
+  outside — editing the visible test into passing does not pass the check.
+
+## 4. `solved: null` is not `solved: false`
+
+A check that could not run, timed out, or could not determine an answer has
+produced **no measurement**. Collapsing that into "failed" silently corrupts
+every rate computed downstream, and it biases in a predictable direction:
+infrastructure flakiness starts looking like the tool making things worse.
+
+The check contract is therefore three-valued:
+
+| exit code | meaning |
+| --- | --- |
+| `0` | solved |
+| `1` | not solved |
+| anything else | indeterminate — `solved: null` |
+
+`null` runs are excluded from the pass-rate denominator, counted separately,
+and named in the report's warnings. A rate over zero determinate runs is
+reported as `null`, not as `0`.
+
+## 5. Dud runs must abort the batch, not pad it
+
+An expired credential does not produce an error you can see. It produces a run
+with exit code 0, a well-formed transcript, one turn, and zero tokens. Nothing
+about that row says "this is not a result". A batch of them becomes a column of
+confident zeros.
+
+Three defences, in order of how early they fire:
+
+1. **Record the credential lifetime in every run record.** Not just at batch
+   start — per run, because a long batch can outlive its own token. If you
+   cannot tell afterwards how much life the credential had, you cannot tell a
+   dud from a genuine failure.
+2. **Exclude zero-cost runs from metrics** — as excluded, with a count, never
+   as failures, and never silently dropped from the reported run total.
+3. **Abort the batch after three consecutive zero-cost runs**, with an error
+   that names the likely causes and points at the stderr log. Three in a row is
+   not bad luck; it is a broken setup, and continuing only spends money to
+   manufacture noise.
+
+## 6. Transcript arithmetic is not obvious
+
+Two traps, both measured against real transcripts rather than assumed:
+
+**Streaming repeats cumulative usage.** One logical assistant message appears
+several times in the stream, each time carrying the running total for that
+message. Summing every `usage` block you see inflates cost, and it inflates it
+*more* for chattier runs — which is exactly the variable a cost delta is trying
+to isolate. Usage is keyed by `message.id` and only the largest observation per
+id is kept. The same applies to `tool_use` blocks: dedupe by block id, or a
+repeated chunk becomes a second invocation.
+
+**Those per-message snapshots are still mid-generation.** On a real run,
+deduping per-message usage reproduced input and cache tokens *exactly* against
+the run's own terminal report — and showed 41 output tokens where the terminal
+report said 2,411. The snapshot is taken before the message finishes. So the
+terminal `result` line is authoritative when the run reached one; deduped
+message usage is the fallback for runs killed before it; and which source was
+used is recorded per run, with a warning when a usable run fell back, because
+its output figure is then a lower bound rather than a measurement.
+
+**Cost is reported as a list-price equivalent, and labelled as one.** It is
+token counts multiplied by published list prices (or the agent's own list-price
+total, which also covers auxiliary models the harness cannot price). It is not
+what you were billed. Subscriptions, negotiated rates and plan-specific caching
+make the real figure different. Saying "this cost $X" without that caveat is
+the kind of number that gets quoted back at you.
+
+## 7. Pilot before you measure, and know when N is too small
+
+A scenario is only informative if the baseline leaves room to move:
+
+- Baseline pass rate near 0% means the task is too hard. Nothing can improve it,
+  so the tool cannot show an effect. **Floor.**
+- Baseline pass rate near 100% means the task is too easy. The tool has no
+  lever. **Ceiling.**
+- Roughly **20%–80% baseline pass rate at N≈10** is the usable band.
+
+Pilot every candidate scenario against that gate *before* it enters a suite, and
+cut or redesign the ones that fail. Never "run it anyway" — a scenario that
+fails the gate spends the full batch to tell you nothing. Piloting costs ~20
+runs; skipping it costs ~80.
+
+Scenarios marked `toolRelevant: false` are exempt from the gate. Their job is to
+count invocations where the tool cannot help, so a ceiling pass rate is expected
+and fine.
+
+On N: **N=5 is pilot scale.** It is enough to prove the loop runs and to gate a
+scenario. It is not enough to publish, and this harness emits a warning saying
+so on any batch below N=20. Citable numbers need **N=20–30 per condition**, and
+null results need the high end — "we found no effect" at N=5 is indistinguishable
+from "we did not look hard enough". Prefer fewer scenarios at high N over many at
+thin N, and apply a multiplicity correction when comparing across many scenarios.
+
+Every rate here carries a **Wilson score interval**, not a normal approximation.
+At N=5, a normal interval around 5/5 collapses to zero width, which reads as
+certainty the data does not contain. Wilson gives 5/5 a 95% interval of roughly
+57%–100%, which is honest about what five runs can tell you.
+
+## 8. The baseline must actually be a baseline
+
+If the spawned agent inherits the host's config directory, environment or
+working tree, then every "baseline" run silently includes whatever skills,
+`CLAUDE.md` and memory the operator happens to have on their machine. The
+output looks completely normal.
+
+Each run therefore gets a throwaway config directory, a stripped environment
+(with the stripped variable names recorded), and a fresh fixture copy in a temp
+directory outside the harness's own repository. The conditions are interleaved
+(with, without, with, without) rather than run in blocks, so drift over a batch
+— rate limits, routing changes, a token approaching expiry — lands on both
+conditions instead of loading onto whichever ran last.
+
+As a backstop, the metrics pass checks for invocations in the *baseline*
+condition and flags the batch as an isolation leak if it finds any. The baseline
+has no access to the tool; if it called it, something in the toggle or the
+matchers is wrong and no number from that batch should be trusted.
+
+## 9. Metrics must be recomputable from stored artifacts
+
+Transcripts are the source of truth. Metrics are a separate pass over the files
+a batch left on disk — no agent process is involved, and `wasitused report` on
+an old batch reproduces its numbers exactly.
+
+This is not just tidiness. It means you can fix how something is measured and
+re-derive every past result without re-running anything. That happened during
+this project's own first real batch: the transcript parser was wrong about
+output tokens, and correcting it re-costed ten completed runs at zero
+additional cost. A metric you can only obtain by re-running the batch is a
+metric you cannot audit, and one you will be reluctant to correct.
+
+The scenario config is snapshotted into `batch.json` for the same reason. Edit
+or delete the scenario file afterwards and the batch still recomputes, using the
+matchers that were actually in force when it ran.
+
+## 10. Documented robustness does not transfer
+
+Everything above can be true, written down, and still absent from your code.
+A lesson learned on one implementation does not carry over to a rewrite just
+because it is in a design document.
+
+So each item here has a test that *deliberately causes* the failure and asserts
+the harness handles it: a simulated dead credential producing exit-0 zero-cost
+runs, a transcript truncated mid-write, a transcript with streaming-duplicated
+usage and a known correct total, a check that returns indeterminate, a config
+with a misspelled matcher key, an isolation toggle that leaks into the baseline.
+
+If you fork this or write your own, re-earn them the same way. The tests are the
+part that transfers.
