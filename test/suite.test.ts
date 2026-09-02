@@ -459,3 +459,31 @@ describe("variance reporting", () => {
     );
   });
 });
+
+describe("a suite leaves analysed batches behind", () => {
+  test("each batch gets its own metrics.json and report.html", async () => {
+    const root = scratch("suite-artifacts");
+    const suiteRoot = makeScenarioSet(root, ["alpha", "beta"]);
+    const { suite } = await runSuite([suiteRoot], {
+      ...baseOpts(root),
+      mode: "full",
+      n: 1,
+      budget: NO_BUDGET,
+      spawnAgent: fixedCostAgent(1000, 0.01),
+    });
+
+    for (const entry of suite.entries) {
+      assert.ok(entry.batchDir, `${entry.scenarioId} produced no batch`);
+      const dir = entry.batchDir as string;
+      assert.ok(
+        fs.existsSync(path.join(dir, "metrics.json")),
+        `${entry.scenarioId}: a suite must not leave batches looking unanalysed`
+      );
+      assert.ok(fs.existsSync(path.join(dir, "report.html")));
+      const m = JSON.parse(
+        fs.readFileSync(path.join(dir, "metrics.json"), "utf8")
+      ) as { scenarioId: string };
+      assert.equal(m.scenarioId, entry.scenarioId);
+    }
+  });
+});

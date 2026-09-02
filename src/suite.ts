@@ -22,6 +22,7 @@ import * as path from "node:path";
 import { batchSpend, computeBatchMetrics, type BatchMetrics } from "./metrics";
 import { assessPilot, pilotFromBatch, type PilotResult } from "./pilot";
 import { COST_CAVEAT } from "./pricing";
+import { renderReport } from "./report";
 import { loadScenario, ScenarioValidationError } from "./scenario";
 import { summarize, type Summary } from "./stats";
 import { DudGuardError, HARNESS_VERSION, runBatch, type RunBatchOptions } from "./runner";
@@ -316,6 +317,14 @@ export async function runSuite(
     let pilot: PilotResult | null = null;
     if (batchDir) {
       metrics = computeBatchMetrics(batchDir);
+      // Persist per-batch metrics and report, same as `run` does. Without this
+      // a suite leaves batches that look unanalysed and every per-scenario
+      // question means re-deriving them by hand.
+      fs.writeFileSync(
+        path.join(batchDir, "metrics.json"),
+        JSON.stringify(metrics, null, 2) + "\n"
+      );
+      fs.writeFileSync(path.join(batchDir, "report.html"), renderReport(metrics));
       // Recompute spend from the stored artifacts: authoritative, and it also
       // catches anything the live hook missed.
       const actual = batchSpend(metrics);
