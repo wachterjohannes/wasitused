@@ -85,6 +85,17 @@ function conditionTable(m: BatchMetrics): string {
     )}
     ${row("Usable runs", (c) => String(c.usable))}
     ${row("Adoption — tool actually invoked", (c) => rateCell(c.adoption))}
+    ${row(
+      "Tool calls that returned an error",
+      (c) =>
+        c.invocationHealth.calls === 0
+          ? '<span class="na">no calls</span>'
+          : `${rateCell(c.invocationHealth.failureRate)}${
+              c.invocationHealth.failed > 0
+                ? '<div class="warnlet">a failed call is still adoption, but any effect in those runs is a broken tool, not a used one</div>'
+                : ""
+            }`
+    )}
     ${row("Read the docs but never called it", (c) => rateCell(c.documentationOnly))}
     ${row(
       "Pass rate (solved / determinate)",
@@ -135,7 +146,7 @@ function runTable(runs: RunMetrics[]): string {
 <table class="grid runs">
   <thead>
     <tr>
-      <th>run</th><th>condition</th><th>invoked</th><th>docs read</th>
+      <th>run</th><th>condition</th><th>invoked</th><th>failed calls</th><th>docs read</th>
       <th>solved</th><th>turns</th><th>tokens</th><th>USD (list eq.)</th>
       <th>wall clock</th><th>status</th>
     </tr>
@@ -158,6 +169,7 @@ function runTable(runs: RunMetrics[]): string {
       <td><code>${esc(r.runId)}</code></td>
       <td>${esc(r.condition)}</td>
       <td>${r.invoked ? `yes (${r.invocationCount})` : "no"}</td>
+      <td>${r.invocationFailures > 0 ? `<span class="bad">${r.invocationFailures}</span>` : r.invocationCount > 0 ? "0" : "&mdash;"}</td>
       <td>${r.documentationCount > 0 ? `yes (${r.documentationCount})` : "no"}</td>
       <td>${solved}</td>
       <td>${r.turns}</td>

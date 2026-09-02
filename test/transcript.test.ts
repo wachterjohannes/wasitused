@@ -223,6 +223,86 @@ describe("adoption vs. reading the docs", () => {
   });
 });
 
+describe("a call that fails is still adoption", () => {
+  function toolResult(id: string, isError: boolean | undefined): string {
+    return JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: id,
+            ...(isError === undefined ? {} : { is_error: isError }),
+            content: "…",
+          },
+        ],
+      },
+    });
+  }
+
+  test("an errored tool call counts as adoption and is reported as failed", () => {
+    // The real case this came from: the agent called the MCP tool, the tool
+    // broke, and the agent fell back to the CLI — paying for both.
+    const text = transcript([
+      initLine(),
+      assistantLine("msg_01", { output_tokens: 10 }, [
+        bashCall("toolu_01", "tools/phrasebook greeting fr"),
+      ]),
+      toolResult("toolu_01", true),
+      resultLine(),
+    ]);
+
+    const a = analyzeTranscriptText(text, TOOL);
+    assert.equal(a.invoked, true, "the agent did call the tool");
+    assert.equal(a.invocationCount, 1);
+    assert.equal(a.invocationFailures, 1);
+    assert.equal(a.events[0]?.failed, true);
+  });
+
+  test("a successful call is not counted as a failure", () => {
+    const text = transcript([
+      initLine(),
+      assistantLine("msg_01", { output_tokens: 10 }, [
+        bashCall("toolu_01", "tools/phrasebook greeting fr"),
+      ]),
+      toolResult("toolu_01", false),
+      resultLine(),
+    ]);
+    const a = analyzeTranscriptText(text, TOOL);
+    assert.equal(a.invocationFailures, 0);
+    assert.equal(a.events[0]?.failed, false);
+  });
+
+  test("an absent is_error means success, not unknown", () => {
+    const text = transcript([
+      initLine(),
+      assistantLine("msg_01", { output_tokens: 10 }, [
+        bashCall("toolu_01", "tools/phrasebook greeting fr"),
+      ]),
+      toolResult("toolu_01", undefined),
+      resultLine(),
+    ]);
+    const a = analyzeTranscriptText(text, TOOL);
+    assert.equal(a.events[0]?.failed, false);
+    assert.equal(a.invocationFailures, 0);
+  });
+
+  test("a call with no result at all is unknown, not success", () => {
+    // The run was cut off before the tool answered.
+    const text = transcript([
+      initLine(),
+      assistantLine("msg_01", { output_tokens: 10 }, [
+        bashCall("toolu_01", "tools/phrasebook greeting fr"),
+      ]),
+    ]);
+    const a = analyzeTranscriptText(text, TOOL);
+    assert.equal(a.events[0]?.failed, null);
+    assert.equal(a.invocationFailures, 0, "unknown must not be counted as failed");
+    assert.equal(a.invoked, true);
+  });
+});
+
 describe("malformed and truncated transcripts", () => {
   test("a truncated final line makes the transcript unparseable rather than crashing", () => {
     const good = transcript([

@@ -26,6 +26,11 @@ export type ToolEventKind = "invocation" | "documentation";
 
 export interface ToolEvent {
   kind: ToolEventKind;
+  /**
+   * Whether the tool call came back an error. null when no result was found
+   * (the run was cut off before the tool answered) — not the same as success.
+   */
+  failed: boolean | null;
   /** The transcript tool-call name, e.g. "Bash" or "mcp__phrasebook__lookup". */
   toolName: string;
   /** Why the matcher fired — kept so a report can show its work. */
@@ -68,6 +73,13 @@ export interface TranscriptAnalysis {
   resultIsError: boolean | null;
   events: ToolEvent[];
   invocationCount: number;
+  /**
+   * Invocations whose result came back an error. Adoption still counts these:
+   * the agent DID call the tool. But "they called it and it broke" is a very
+   * different message for a tool author than "they called it and it worked",
+   * so the two are never collapsed.
+   */
+  invocationFailures: number;
   documentationCount: number;
   invoked: boolean;
   readDocs: boolean;
@@ -198,6 +210,8 @@ export function analyzeTranscriptText(
   const usageByMessage = new Map<string, TokenTotals>();
   const seenBlockIds = new Set<string>();
   const events: ToolEvent[] = [];
+  /** tool_use_id -> did the result come back an error. */
+  const resultErrors = new Map<string, boolean>();
 
   for (let i = 0; i < meaningful.length; i++) {
     const line = meaningful[i] as string;
@@ -255,6 +269,7 @@ export function analyzeTranscriptText(
           if (hit) {
             events.push({
               kind: hit.kind,
+              failed: null,
               toolName,
               matchedBy: hit.matchedBy,
               blockId,
@@ -262,6 +277,22 @@ export function analyzeTranscriptText(
               detail: hit.detail,
             });
           }
+        }
+      }
+    }
+
+    // Tool results arrive in the following user turn; join them up afterwards.
+    if (obj.type === "user" && typeof obj.message === "object" && obj.message) {
+      const content = (obj.message as Record<string, unknown>).content;
+      if (Array.isArray(content)) {
+        for (const rawBlock of content) {
+          if (typeof rawBlock !== "object" || rawBlock === null) continue;
+          const block = rawBlock as Record<string, unknown>;
+          if (block.type !== "tool_result") continue;
+          const id = block.tool_use_id;
+          if (typeof id !== "string") continue;
+          // An absent is_error means success; the field is only set on failure.
+          resultErrors.set(id, block.is_error === true);
         }
       }
     }
@@ -286,13 +317,20 @@ export function analyzeTranscriptText(
   totals.total =
     totals.input + totals.output + totals.cacheRead + totals.cacheCreation;
 
+  for (const event of events) {
+    const failed = resultErrors.get(event.blockId);
+    event.failed = failed === undefined ? null : failed;
+  }
+
   const messageTotals = { ...totals };
   // The result line is complete; the streamed snapshots are not.
   const useResult =
     reportedTotals !== null && reportedTotals.total >= messageTotals.total;
   const best = useResult ? (reportedTotals as TokenTotals) : messageTotals;
 
-  const invocationCount = events.filter((e) => e.kind === "invocation").length;
+  const invocations = events.filter((e) => e.kind === "invocation");
+  const invocationCount = invocations.length;
+  const invocationFailures = invocations.filter((e) => e.failed === true).length;
   const documentationCount = events.filter((e) => e.kind === "documentation").length;
 
   return {
@@ -314,6 +352,7 @@ export function analyzeTranscriptText(
     resultIsError,
     events,
     invocationCount,
+    invocationFailures,
     documentationCount,
     invoked: invocationCount > 0,
     readDocs: documentationCount > 0,
@@ -347,6 +386,7 @@ export function analyzeTranscriptFile(
       resultIsError: null,
       events: [],
       invocationCount: 0,
+      invocationFailures: 0,
       documentationCount: 0,
       invoked: false,
       readDocs: false,

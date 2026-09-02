@@ -47,6 +47,8 @@ export interface RunMetrics {
   exclusionReason: string | null;
   invoked: boolean;
   invocationCount: number;
+  /** Invocations that came back an error. Still counted as adoption. */
+  invocationFailures: number;
   documentationCount: number;
   /** Read the tool's docs but never called it — the distinction adoption depends on. */
   documentationOnly: boolean;
@@ -86,6 +88,8 @@ export interface ConditionMetrics {
   excluded: { dudZeroCost: number; unparseableTranscript: number; missingRunRecord: number };
   usable: number;
   adoption: Rate;
+  /** Failed calls over all calls made. Denominator is invocations, not runs. */
+  invocationHealth: { calls: number; failed: number; failureRate: Rate };
   documentationOnly: Rate;
   efficacy: {
     solved: number;
@@ -213,6 +217,7 @@ export function metricsForRun(
       exclusionReason: `no readable run.json in ${runDir}`,
       invoked: false,
       invocationCount: 0,
+      invocationFailures: 0,
       documentationCount: 0,
       documentationOnly: false,
       solved: null,
@@ -272,6 +277,7 @@ export function metricsForRun(
     exclusionReason,
     invoked: analysis.invoked,
     invocationCount: analysis.invocationCount,
+    invocationFailures: analysis.invocationFailures,
     documentationCount: analysis.documentationCount,
     documentationOnly: analysis.readDocs && !analysis.invoked,
     solved,
@@ -314,6 +320,11 @@ function conditionMetrics(
     },
     usable: usable.length,
     adoption: rate(usable.filter((r) => r.invoked).length, usable.length),
+    invocationHealth: (() => {
+      const calls = usable.reduce((a, r) => a + r.invocationCount, 0);
+      const failed = usable.reduce((a, r) => a + r.invocationFailures, 0);
+      return { calls, failed, failureRate: rate(failed, calls) };
+    })(),
     documentationOnly: rate(
       usable.filter((r) => r.documentationOnly).length,
       usable.length
@@ -441,6 +452,16 @@ export function computeBatchMetrics(batchDir: string): BatchMetrics {
         `${runs.filter((r) => r.exclusion === "missing-run-record").length} missing run records). ` +
         "They are excluded from every rate below and are NOT counted as failures."
     );
+  }
+  for (const c of CONDITIONS) {
+    const health = conditions[c].invocationHealth;
+    if (health.failed > 0) {
+      warnings.push(
+        `${c}: ${health.failed} of ${health.calls} tool call(s) returned an error. ` +
+          "Those still count as adoption — the agent did call the tool — but a cost or " +
+          "efficacy difference in those runs reflects a broken tool, not a used one."
+      );
+    }
   }
   if (counts.baselineInvoked > 0) {
     warnings.push(

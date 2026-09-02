@@ -33,6 +33,17 @@ by separate config, and validation rejects a scenario that puts the same skill
 in both. Build the distinction in on day one; retrofitting it means re-reading
 every transcript you have.
 
+**A call that errors is still a call.** Adoption asks whether the agent chose to
+invoke the tool, and it chose whether or not the tool then worked. So a failed
+invocation counts toward adoption — but it is reported separately, because the
+two mean opposite things to a tool author. This is not hypothetical: in a real
+run the agent found the MCP tool, called it, got `is_error: true`, fell back to
+the raw CLI and finished the task — spending 20% more tokens than the baseline
+that never had the tool at all. Collapsing that into "adopted, and cost went up"
+would read as *the tool is expensive* when the finding is *the tool is broken*.
+Absent `is_error` means success; **no result at all** means unknown, and unknown
+is not counted as either.
+
 **Corollary:** the scenario prompt must never mention the tool. If the prompt
 says "use the phrasebook", the adoption number measures instruction-following.
 The only difference between the two conditions should be whether the tool
