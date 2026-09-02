@@ -10,7 +10,13 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { prepareIsolatedRun, inspectCredentials, stripInheritedAgentEnv } from "./isolation";
+import {
+  prepareIsolatedRun,
+  inspectCredentials,
+  stripInheritedAgentEnv,
+  OAUTH_TOKEN_ENV,
+  type CredentialSource,
+} from "./isolation";
 import { bestEffortUsd } from "./pricing";
 import { analyzeTranscriptFile } from "./transcript";
 import type {
@@ -109,7 +115,7 @@ export interface RunProgress {
 export interface RunBatchOptions {
   n: number;
   outDir: string;
-  credentialsPath: string;
+  credential: CredentialSource;
   model?: string;
   /**
    * Which conditions to run, in the order they are interleaved.
@@ -271,11 +277,11 @@ export async function runOnce(
     ...(scenario.tool.enable.mcpServers
       ? { mcpServers: scenario.tool.enable.mcpServers }
       : {}),
-    credentialsPath: opts.credentialsPath,
+    credential: opts.credential,
     ...(opts.tmpRoot ? { tmpRoot: opts.tmpRoot } : {}),
   });
 
-  const credential = inspectCredentials(opts.credentialsPath);
+  const credential = inspectCredentials(opts.credential);
   credential.copied = fs.existsSync(
     path.join(isolated.configDir, ".credentials.json")
   );
@@ -284,6 +290,11 @@ export async function runOnce(
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
     CLAUDE_CONFIG_DIR: isolated.configDir,
+    // The only CLAUDE_* variable deliberately re-added after stripping. It is
+    // the credential, not configuration, and it never reaches disk or argv.
+    ...(opts.credential.kind === "oauth-token"
+      ? { [OAUTH_TOKEN_ENV]: opts.credential.token }
+      : {}),
     ...(toolEnabled ? scenario.tool.enable.env ?? {} : {}),
   };
 
@@ -392,11 +403,13 @@ export async function runBatch(
   fs.mkdirSync(path.join(batchDir, "runs"), { recursive: true });
 
   const conditions = opts.conditions ?? CONDITIONS;
-  const credential = inspectCredentials(opts.credentialsPath);
+  const credential = inspectCredentials(opts.credential);
   log(
-    `credential: source=${credential.source} remaining=${
-      credential.remainingHuman ?? "unknown"
-    }${credential.expired ? " EXPIRED" : ""}`
+    `credential: source=${credential.source}${
+      credential.origin ? ` (${credential.origin})` : ""
+    } remaining=${credential.remainingHuman ?? "unknown"}${
+      credential.expired ? " EXPIRED" : ""
+    }`
   );
   if (credential.note) log(`credential note: ${credential.note}`);
 

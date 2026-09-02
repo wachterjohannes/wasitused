@@ -88,9 +88,16 @@ export interface ResolvedScenario extends ScenarioConfig {
 
 export interface CredentialInfo {
   /** Where the harness got the agent's credentials from. */
-  source: "config-file" | "env-api-key" | "none";
+  source: "config-file" | "env-api-key" | "oauth-token" | "none";
   path?: string;
+  /** Human-readable provenance for token auth, e.g. "$CLAUDE_CODE_OAUTH_TOKEN". */
+  origin?: string;
   copied: boolean;
+  /**
+   * Whether the remaining lifetime could actually be read. false means unknown,
+   * which is not the same as healthy — a bare token has no readable expiry.
+   */
+  lifetimeKnown: boolean;
   expiresAt: number | null;
   remainingMs: number | null;
   remainingHuman: string | null;

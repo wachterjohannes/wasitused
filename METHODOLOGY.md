@@ -117,6 +117,17 @@ Three defences, in order of how early they fire:
    start — per run, because a long batch can outlive its own token. If you
    cannot tell afterwards how much life the credential had, you cannot tell a
    dud from a genuine failure.
+
+   When the lifetime genuinely cannot be read — a long-lived token from
+   `claude setup-token` carries no introspectable expiry — record it as
+   **unknown**, and never as healthy. The tempting shortcut is to wrap the token
+   in a synthetic credential file with a far-future expiry so the existing code
+   path works unchanged. That writes a claim into every run record that nothing
+   verified, and it disables the one signal that distinguishes "the agent did
+   nothing useful" from "the credential was dead the whole time". Unknown is a
+   worse answer than a real expiry and a much better one than a fabricated
+   expiry; under token auth the dud guard is the whole defence, so it should be
+   visible that it is.
 2. **Exclude zero-cost runs from metrics** — as excluded, with a count, never
    as failures, and never silently dropped from the reported run total.
 3. **Abort the batch after three consecutive zero-cost runs**, with an error

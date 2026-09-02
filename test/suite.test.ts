@@ -91,7 +91,7 @@ function fixedCostAgent(tokens: number, usd: number, solved = false): SpawnAgent
 function baseOpts(root: string) {
   return {
     outDir: path.join(root, "runs"),
-    credentialsPath: path.join(root, "credentials.json"),
+    credential: { kind: "file" as const, path: path.join(root, "credentials.json") },
     tmpRoot: root,
     log: () => {},
   };

@@ -201,6 +201,7 @@ export function makeBatchDir(
       credential: {
         source: "config-file",
         copied: true,
+        lifetimeKnown: true,
         expiresAt: 4102444800000,
         remainingMs: 3600000,
         remainingHuman: "1h00m",

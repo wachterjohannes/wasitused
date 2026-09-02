@@ -99,6 +99,7 @@ describe("dud guard at the metrics layer", () => {
           credential: {
             source: "config-file",
             copied: true,
+            lifetimeKnown: true,
             expiresAt: 1,
             remainingMs: -5000,
             remainingHuman: "-0h00m",

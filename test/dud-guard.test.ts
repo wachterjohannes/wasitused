@@ -68,7 +68,7 @@ function baseOptions(root: string) {
   return {
     n: 5,
     outDir: path.join(root, "runs"),
-    credentialsPath: path.join(root, "credentials.json"),
+    credential: { kind: "file" as const, path: path.join(root, "credentials.json") },
     tmpRoot: root,
     log: () => {},
   };

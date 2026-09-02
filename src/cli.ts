@@ -5,7 +5,12 @@
 import { parseArgs } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { defaultCredentialsPath, inspectCredentials, stripInheritedAgentEnv } from "./isolation";
+import {
+  inspectCredentials,
+  resolveCredentialSource,
+  stripInheritedAgentEnv,
+  type CredentialSource,
+} from "./isolation";
 import { formatRate, formatSummary, formatUsd, formatTokens } from "./format";
 import { computeBatchMetrics } from "./metrics";
 import { PILOT_EXIT, runPilot, type PilotResult } from "./pilot";
@@ -32,6 +37,13 @@ Options for "run":
       --model <id>         override the scenario's pinned model
       --credentials <path> credential file to copy into each isolated config
                            (default ~/.claude/.credentials.json)
+      --oauth-token-file <path>
+                           use a long-lived "claude setup-token" token from this file
+      --oauth-token-env <VAR>
+                           read that token from an env var instead (defaults to
+                           CLAUDE_CODE_OAUTH_TOKEN when it is set). A token is never
+                           accepted as a bare argument — argv is visible to every
+                           other process on the machine.
       --agent-command <c>  agent executable (default "claude")
       --keep-temp          keep the per-run temp dirs for debugging
       --dry-run            print the exact isolation + spawn plan, run nothing
@@ -61,6 +73,20 @@ Options for "report" / "suite-report":
 Every metric is recomputed from the stored transcripts, so "report", "suite-report"
 and "metrics" never spend a run.`;
 
+const CREDENTIAL_OPTIONS = {
+  credentials: { type: "string" },
+  "oauth-token-env": { type: "string" },
+  "oauth-token-file": { type: "string" },
+} as const;
+
+function credentialFrom(values: Record<string, unknown>): CredentialSource {
+  return resolveCredentialSource({
+    credentialsPath: values.credentials as string | undefined,
+    oauthTokenEnv: values["oauth-token-env"] as string | undefined,
+    oauthTokenFile: values["oauth-token-file"] as string | undefined,
+  });
+}
+
 function fail(message: string): never {
   process.stderr.write(message.endsWith("\n") ? message : message + "\n");
   process.exit(1);
@@ -74,7 +100,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       n: { type: "string", short: "n" },
       out: { type: "string", short: "o" },
       model: { type: "string" },
-      credentials: { type: "string" },
+      ...CREDENTIAL_OPTIONS,
       "agent-command": { type: "string" },
       "keep-temp": { type: "boolean" },
       "dry-run": { type: "boolean" },
@@ -88,12 +114,12 @@ async function cmdRun(argv: string[]): Promise<void> {
   if (!Number.isInteger(n) || n < 1) fail(`--n must be a positive integer, got "${values.n}"`);
 
   const outDir = path.resolve(values.out ?? "runs");
-  const credentialsPath = path.resolve(values.credentials ?? defaultCredentialsPath());
+  const credential = credentialFrom(values);
   const model = values.model ?? scenario.agent.model;
 
   if (values["dry-run"]) {
     const { stripped } = stripInheritedAgentEnv();
-    const credential = inspectCredentials(credentialsPath);
+    const info = inspectCredentials(credential);
     const plan = {
       scenario: scenario.id,
       toolRelevant: scenario.toolRelevant,
@@ -107,10 +133,12 @@ async function cmdRun(argv: string[]): Promise<void> {
         workDir: "<temp>/work    (fresh copy of " + scenario.fixturePath + ")",
         strippedEnvVars: stripped,
         credential: {
-          source: credential.source,
-          remaining: credential.remainingHuman,
-          expired: credential.expired,
-          note: credential.note ?? null,
+          source: info.source,
+          origin: info.origin ?? null,
+          lifetimeKnown: info.lifetimeKnown,
+          remaining: info.remainingHuman,
+          expired: info.expired,
+          note: info.note ?? null,
         },
       },
       argvWithTool: buildAgentArgv(
@@ -139,7 +167,7 @@ async function cmdRun(argv: string[]): Promise<void> {
     const result = await runBatch(scenario, {
       n,
       outDir,
-      credentialsPath,
+      credential,
       model,
       ...(values["keep-temp"] ? { keepTemp: true } : {}),
       ...(values["agent-command"] ? { agentCommand: values["agent-command"] } : {}),
@@ -194,7 +222,7 @@ async function cmdPilot(argv: string[]): Promise<void> {
       n: { type: "string", short: "n" },
       out: { type: "string", short: "o" },
       model: { type: "string" },
-      credentials: { type: "string" },
+      ...CREDENTIAL_OPTIONS,
       "agent-command": { type: "string" },
       "keep-temp": { type: "boolean" },
       json: { type: "boolean" },
@@ -226,7 +254,7 @@ async function cmdPilot(argv: string[]): Promise<void> {
     result = await runPilot(scenario, {
       n,
       outDir: path.resolve(values.out ?? "runs"),
-      credentialsPath: path.resolve(values.credentials ?? defaultCredentialsPath()),
+      credential: credentialFrom(values),
       ...(values.model ? { model: values.model } : {}),
       ...(values["keep-temp"] ? { keepTemp: true } : {}),
       ...(values["agent-command"] ? { agentCommand: values["agent-command"] } : {}),
@@ -253,7 +281,7 @@ async function cmdSuite(argv: string[]): Promise<void> {
       n: { type: "string", short: "n" },
       out: { type: "string", short: "o" },
       model: { type: "string" },
-      credentials: { type: "string" },
+      ...CREDENTIAL_OPTIONS,
       "agent-command": { type: "string" },
       "keep-temp": { type: "boolean" },
       pilot: { type: "boolean" },
@@ -300,7 +328,7 @@ async function cmdSuite(argv: string[]): Promise<void> {
     budget,
     n,
     outDir: path.resolve(values.out ?? "runs"),
-    credentialsPath: path.resolve(values.credentials ?? defaultCredentialsPath()),
+    credential: credentialFrom(values),
     ...(values.model ? { model: values.model } : {}),
     ...(values["keep-temp"] ? { keepTemp: true } : {}),
     ...(values["agent-command"] ? { agentCommand: values["agent-command"] } : {}),

@@ -225,10 +225,30 @@ risk lives. Every run gets:
   stripped written into the run record;
 - a **fresh copy of the fixture outside this repo** — the agent never runs in
   the harness's own working tree;
-- **credentials copied in fresh, with their remaining lifetime recorded.** An
+- **credentials supplied fresh, with their remaining lifetime recorded.** An
   expired token produces a run that looks perfectly legitimate — exit 0, one
   turn, zero cost — and is indistinguishable from "the model did nothing
   useful" unless the lifetime is on record.
+
+Two credential shapes are supported:
+
+```bash
+# A credential file (default ~/.claude/.credentials.json), copied per run.
+wasitused run scenario.json --credentials ~/.claude/.credentials.json
+
+# A long-lived token from `claude setup-token` — for CI, or any unattended run.
+export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+wasitused run scenario.json            # picked up automatically
+wasitused run scenario.json --oauth-token-file ./token
+```
+
+The token is the single `CLAUDE_*` variable deliberately re-added after
+stripping, and it never reaches disk or argv — a token in `ps` output or a
+stored artifact is a leaked token, and there is a test that sweeps every
+persisted file to keep it that way. Because a bare token has no readable
+expiry, runs under token auth record their credential lifetime as **unknown**
+rather than inventing a healthy-looking one; the dud guard is what catches a
+token that dies mid-batch.
 
 If three consecutive runs produce zero billable tokens, the batch **aborts
 loudly** rather than letting dud rows be counted as failures.

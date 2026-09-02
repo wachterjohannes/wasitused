@@ -10,9 +10,22 @@
  *   3. Filesystem: a fresh copy of the fixture in a temp dir, so the agent
  *      never runs inside the harness's own working tree.
  *
- * Credentials are copied in fresh per run and their remaining lifetime is
- * recorded, because an expired token produces a run that looks legitimate
- * (one turn, no cost, exit 0) but measured nothing.
+ * Credentials are supplied fresh per run and whatever is knowable about their
+ * remaining lifetime is recorded, because an expired token produces a run that
+ * looks legitimate (one turn, no cost, exit 0) but measured nothing.
+ *
+ * Two credential shapes are supported, and the difference is reported rather
+ * than smoothed over:
+ *
+ *   - **A credential file** (`~/.claude/.credentials.json`), copied into the
+ *     throwaway config dir. Its OAuth expiry is readable, so every run records
+ *     exactly how much life the credential had left.
+ *   - **A long-lived OAuth token** (from `claude setup-token`), injected as the
+ *     single deliberately re-added `CLAUDE_*` variable after stripping. A bare
+ *     token carries no introspectable expiry, so the lifetime is recorded as
+ *     *unknown* rather than invented. Writing a made-up far-future expiry would
+ *     make every run claim a healthy credential it cannot vouch for, which is
+ *     precisely the signal the dud guard depends on.
  */
 
 import * as fs from "node:fs";
@@ -22,6 +35,64 @@ import type { CredentialInfo } from "./types";
 
 /** Env vars that configure the agent under test and must never be inherited. */
 export const AGENT_ENV_PREFIXES = ["CLAUDE_", "CLAUDECODE"];
+
+/** The env var Claude Code reads a `claude setup-token` credential from. */
+export const OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
+
+/**
+ * Where a run's credentials come from.
+ *
+ * `token` is held in memory and injected into the child's environment. It is
+ * never written to a run record, a transcript, or an argv — a token in `ps`
+ * output or a committed artifact is a leaked token.
+ */
+export type CredentialSource =
+  | { kind: "file"; path: string }
+  | { kind: "oauth-token"; token: string; origin: string };
+
+export interface ResolveCredentialOptions {
+  /** Explicit --credentials path. Wins over token auth when given. */
+  credentialsPath?: string | undefined;
+  /** Read the token from this env var. */
+  oauthTokenEnv?: string | undefined;
+  /** Read the token from the first line of this file. */
+  oauthTokenFile?: string | undefined;
+  env?: NodeJS.ProcessEnv;
+  home?: string;
+}
+
+/**
+ * Picks a credential source.
+ *
+ * Precedence: an explicit file, then an explicit token file, then a token in
+ * the environment, then the default credential file path. A token is never
+ * accepted as a command-line argument: arguments are visible to every other
+ * process on the machine.
+ */
+export function resolveCredentialSource(
+  opts: ResolveCredentialOptions = {}
+): CredentialSource {
+  const env = opts.env ?? process.env;
+
+  if (opts.credentialsPath) {
+    return { kind: "file", path: path.resolve(opts.credentialsPath) };
+  }
+
+  if (opts.oauthTokenFile) {
+    const file = path.resolve(opts.oauthTokenFile);
+    const token = fs.readFileSync(file, "utf8").trim();
+    if (!token) throw new Error(`oauth token file is empty: ${file}`);
+    return { kind: "oauth-token", token, origin: `file ${file}` };
+  }
+
+  const varName = opts.oauthTokenEnv ?? OAUTH_TOKEN_ENV;
+  const fromEnv = env[varName];
+  if (fromEnv && fromEnv.trim()) {
+    return { kind: "oauth-token", token: fromEnv.trim(), origin: `$${varName}` };
+  }
+
+  return { kind: "file", path: defaultCredentialsPath(opts.home ?? os.homedir()) };
+}
 
 export interface StrippedEnv {
   env: NodeJS.ProcessEnv;
@@ -63,15 +134,34 @@ export function humanDuration(ms: number): string {
  * left. Never logs or returns token material.
  */
 export function inspectCredentials(
-  credentialsPath: string,
+  source: CredentialSource,
   env: NodeJS.ProcessEnv = process.env,
   now: number = Date.now()
 ): CredentialInfo {
+  if (source.kind === "oauth-token") {
+    return {
+      source: "oauth-token",
+      origin: source.origin,
+      copied: false,
+      lifetimeKnown: false,
+      expiresAt: null,
+      remainingMs: null,
+      remainingHuman: null,
+      expired: false,
+      note:
+        "Long-lived OAuth token: it carries no expiry this harness can read, so the " +
+        "remaining lifetime is unknown rather than assumed healthy. If the token dies " +
+        "mid-batch the dud guard is what catches it.",
+    };
+  }
+
+  const credentialsPath = source.path;
   if (!fs.existsSync(credentialsPath)) {
     if (env.ANTHROPIC_API_KEY) {
       return {
         source: "env-api-key",
         copied: false,
+        lifetimeKnown: false,
         expiresAt: null,
         remainingMs: null,
         remainingHuman: null,
@@ -83,6 +173,7 @@ export function inspectCredentials(
       source: "none",
       path: credentialsPath,
       copied: false,
+      lifetimeKnown: false,
       expiresAt: null,
       remainingMs: null,
       remainingHuman: null,
@@ -115,6 +206,7 @@ export function inspectCredentials(
     source: "config-file",
     path: credentialsPath,
     copied: false,
+    lifetimeKnown: expiresAt !== null,
     expiresAt,
     remainingMs,
     remainingHuman: remainingMs === null ? null : humanDuration(remainingMs),
@@ -146,7 +238,7 @@ export interface PrepareOptions {
   skills?: string[];
   fixtureFiles?: string[];
   mcpServers?: Record<string, unknown>;
-  credentialsPath: string;
+  credential: CredentialSource;
   /** Overridable so tests never touch the real temp root of a live batch. */
   tmpRoot?: string;
 }
@@ -171,9 +263,10 @@ export function prepareIsolatedRun(opts: PrepareOptions): IsolatedRun {
     JSON.stringify({ includeCoAuthoredBy: false }, null, 2) + "\n"
   );
 
-  if (fs.existsSync(opts.credentialsPath)) {
+  // A token is injected into the child's environment instead, never to disk.
+  if (opts.credential.kind === "file" && fs.existsSync(opts.credential.path)) {
     const target = path.join(configDir, ".credentials.json");
-    fs.copyFileSync(opts.credentialsPath, target);
+    fs.copyFileSync(opts.credential.path, target);
     fs.chmodSync(target, 0o600);
   }
 

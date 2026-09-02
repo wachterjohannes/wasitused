@@ -248,7 +248,7 @@ describe("runPilot", () => {
     const result = await runPilot(scenario, {
       n: 4,
       outDir: path.join(root, "runs"),
-      credentialsPath: path.join(root, "credentials.json"),
+      credential: { kind: "file" as const, path: path.join(root, "credentials.json") },
       tmpRoot: root,
       spawnAgent: fakeAgent([true, false, false, false]),
       log: () => {},
@@ -275,7 +275,7 @@ describe("runPilot", () => {
     const result = await runPilot(scenario, {
       n: 3,
       outDir: path.join(root, "runs"),
-      credentialsPath: path.join(root, "credentials.json"),
+      credential: { kind: "file" as const, path: path.join(root, "credentials.json") },
       tmpRoot: root,
       spawnAgent: fakeAgent([false]),
       log: () => {},
