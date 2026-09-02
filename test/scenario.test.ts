@@ -210,3 +210,27 @@ describe("the shipped example scenarios", () => {
     assert.ok(relevance.includes(false), "over-use needs something to measure against");
   });
 });
+
+describe("artifactExclude", () => {
+  test("accepts relative paths inside the fixture", () => {
+    const config = validateScenario(
+      { ...scenarioConfig(), artifactExclude: ["vendor", "var/cache"] },
+      "test.json"
+    );
+    assert.deepEqual(config.artifactExclude, ["vendor", "var/cache"]);
+  });
+
+  test("refuses to reach outside the fixture", () => {
+    for (const bad of ["/etc", "../secrets", "vendor/../../etc"]) {
+      const problems = problemsFor({ ...scenarioConfig(), artifactExclude: [bad] });
+      assert.ok(
+        problems.some((p) => p.includes("must be a relative path inside the fixture")),
+        `"${bad}" should have been rejected`
+      );
+    }
+  });
+
+  test("is optional", () => {
+    assert.equal(validateScenario(scenarioConfig(), "test.json").artifactExclude, undefined);
+  });
+});

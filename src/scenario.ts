@@ -29,6 +29,7 @@ const SCENARIO_KEYS = [
   "toolRelevant",
   "prompt",
   "fixture",
+  "artifactExclude",
   "check",
   "agent",
   "tool",
@@ -111,6 +112,19 @@ export function validateScenario(
   }
   if (typeof raw.fixture !== "string" || raw.fixture.trim() === "") {
     problems.push("fixture: required path to the fixture directory");
+  }
+
+  const artifactExclude = stringArray(
+    raw.artifactExclude,
+    "artifactExclude",
+    problems
+  );
+  for (const entry of artifactExclude ?? []) {
+    if (path.isAbsolute(entry) || entry.split(/[\\/]/).includes("..")) {
+      problems.push(
+        `artifactExclude: "${entry}" must be a relative path inside the fixture`
+      );
+    }
   }
 
   // check
@@ -328,6 +342,7 @@ export function validateScenario(
     toolRelevant: raw.toolRelevant as boolean,
     prompt: raw.prompt as string,
     fixture: raw.fixture as string,
+    ...(artifactExclude ? { artifactExclude } : {}),
     check,
     agent,
     tool,

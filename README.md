@@ -203,6 +203,12 @@ The success check reports **exit 0 = solved, exit 1 = not solved, anything else
 = indeterminate**. Indeterminate is recorded as `solved: null` and is never
 counted as a failure.
 
+For fixtures with regenerable bulk — `vendor/`, `node_modules/`, a build cache —
+add `"artifactExclude": ["vendor", "var/cache"]`. The agent still gets those
+directories; they are just not copied into every stored run, which is the
+difference between a 1MB artifact per run and a 100MB one. What was excluded is
+recorded in the run record, so a thinned artifact never reads as a complete one.
+
 Two rules the bundled examples follow, and you should too:
 
 - **The prompt must not mention the tool.** If it does, you are measuring

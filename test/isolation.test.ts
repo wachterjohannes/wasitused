@@ -511,3 +511,82 @@ describe("token auth never touches disk", () => {
     );
   });
 });
+
+describe("artifact storage", () => {
+  test("excluded bulk is left out of the artifact but present for the run", async () => {
+    const root = scratch("artifact-exclude");
+    const scenario = makeScenarioDir(root, { artifactExclude: ["heavy"] });
+    // A directory the agent needs at run time but which is regenerable.
+    fs.mkdirSync(path.join(scenario.fixturePath, "heavy"), { recursive: true });
+    fs.writeFileSync(path.join(scenario.fixturePath, "heavy", "big.bin"), "x".repeat(4096));
+
+    let sawHeavyAtRunTime = false;
+    const agent: SpawnAgentFn = async (req) => {
+      sawHeavyAtRunTime = fs.existsSync(path.join(req.cwd, "heavy", "big.bin"));
+      fs.writeFileSync(
+        req.transcriptFile,
+        transcript([initLine(), assistantLine("m1", { output_tokens: 9 }), resultLine()])
+      );
+      fs.writeFileSync(req.stderrFile, "");
+      return { exitCode: 0, signal: null, timedOut: false };
+    };
+
+    const { batchDir, batch } = await runBatch(scenario, {
+      n: 1,
+      outDir: path.join(root, "runs"),
+      credential: { kind: "file" as const, path: path.join(root, "nope.json") },
+      tmpRoot: root,
+      spawnAgent: agent,
+      log: () => {},
+    });
+
+    assert.equal(sawHeavyAtRunTime, true, "the agent must still get the excluded files");
+
+    const runDir = path.join(batchDir, batch.runDirs[0] as string);
+    const record = JSON.parse(fs.readFileSync(path.join(runDir, "run.json"), "utf8")) as {
+      artifactExcluded: string[];
+      artifactError: string | null;
+    };
+    assert.deepEqual(record.artifactExcluded, ["heavy"]);
+    assert.equal(record.artifactError, null);
+
+    // The artifact keeps the source of truth and drops only the declared bulk.
+    assert.ok(fs.existsSync(path.join(runDir, "artifact", "app.txt")));
+    assert.equal(
+      fs.existsSync(path.join(runDir, "artifact", "heavy")),
+      false,
+      "excluded bulk must not be persisted per run"
+    );
+    assert.ok(
+      record.artifactExcluded.length > 0,
+      "a thinned artifact must say what is missing from it"
+    );
+  });
+
+  test("with no exclusions the artifact is complete", async () => {
+    const root = scratch("artifact-full");
+    const scenario = makeScenarioDir(root);
+    const agent: SpawnAgentFn = async (req) => {
+      fs.writeFileSync(
+        req.transcriptFile,
+        transcript([initLine(), assistantLine("m1", { output_tokens: 9 }), resultLine()])
+      );
+      fs.writeFileSync(req.stderrFile, "");
+      return { exitCode: 0, signal: null, timedOut: false };
+    };
+    const { batchDir, batch } = await runBatch(scenario, {
+      n: 1,
+      outDir: path.join(root, "runs"),
+      credential: { kind: "file" as const, path: path.join(root, "nope.json") },
+      tmpRoot: root,
+      spawnAgent: agent,
+      log: () => {},
+    });
+    const runDir = path.join(batchDir, batch.runDirs[0] as string);
+    const record = JSON.parse(fs.readFileSync(path.join(runDir, "run.json"), "utf8")) as {
+      artifactExcluded: string[];
+    };
+    assert.deepEqual(record.artifactExcluded, []);
+    assert.ok(fs.existsSync(path.join(runDir, "artifact", "app.txt")));
+  });
+});

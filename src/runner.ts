@@ -337,8 +337,24 @@ export async function runOnce(
   const check = await runCheck(scenario, isolated.workDir);
   fs.writeFileSync(checkFile, JSON.stringify(check, null, 2) + "\n");
 
-  // Keep the artifact: it is the ground truth the check ran against.
-  fs.cpSync(isolated.workDir, artifactDir, { recursive: true });
+  // Keep the artifact: it is the ground truth the check ran against. Bulk the
+  // scenario marked as regenerable is skipped, and recorded as skipped — a
+  // thinned artifact that does not say so is a misleading artifact.
+  const artifactExcluded = scenario.artifactExclude ?? [];
+  const excludedAbs = new Set(
+    artifactExcluded.map((rel) => path.resolve(isolated.workDir, rel))
+  );
+  let artifactError: string | null = null;
+  try {
+    fs.cpSync(isolated.workDir, artifactDir, {
+      recursive: true,
+      filter: (src) => !excludedAbs.has(path.resolve(src)),
+    });
+  } catch (err) {
+    // A full disk must not destroy a run that already cost money to produce.
+    artifactError = `artifact could not be stored: ${(err as Error).message}`;
+    fs.rmSync(artifactDir, { recursive: true, force: true });
+  }
 
   const record: RunRecord = {
     schemaVersion: 1,
@@ -361,7 +377,9 @@ export async function runOnce(
     transcriptFile: path.relative(batchDir, transcriptFile),
     stderrFile: path.relative(batchDir, stderrFile),
     checkFile: path.relative(batchDir, checkFile),
-    artifactDir: path.relative(batchDir, artifactDir),
+    artifactDir: artifactError ? null : path.relative(batchDir, artifactDir),
+    artifactExcluded,
+    artifactError,
     tempDir: isolated.tempDir,
   };
   fs.writeFileSync(
@@ -420,6 +438,7 @@ export async function runBatch(
     scenarioConfigPath: scenario.configPath,
     scenarioSnapshot: {
       id: scenario.id,
+      ...(scenario.artifactExclude ? { artifactExclude: scenario.artifactExclude } : {}),
       ...(scenario.description !== undefined
         ? { description: scenario.description }
         : {}),

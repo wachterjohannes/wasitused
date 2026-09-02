@@ -74,6 +74,14 @@ export interface ScenarioConfig {
   toolRelevant: boolean;
   prompt: string;
   fixture: string;
+  /**
+   * Paths (relative to the agent's working copy) left out of the persisted
+   * artifact. For regenerable bulk like `vendor/` or `var/cache` — the agent
+   * still gets them, they just are not copied into every stored run. What was
+   * excluded is recorded per run so a thinned artifact is never mistaken for a
+   * complete one.
+   */
+  artifactExclude?: string[];
   check: SuccessCheck;
   agent: AgentConfig;
   tool: ToolUnderTest;
@@ -129,6 +137,10 @@ export interface RunRecord {
   stderrFile: string;
   checkFile: string;
   artifactDir: string | null;
+  /** Paths deliberately left out of the artifact, so it reads as partial. */
+  artifactExcluded: string[];
+  /** Set when the artifact could not be stored at all (e.g. no disk space). */
+  artifactError: string | null;
   tempDir: string;
 }
 

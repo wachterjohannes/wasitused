@@ -213,6 +213,8 @@ export function makeBatchDir(
       stderrFile: path.join(rel, "agent.stderr.log"),
       checkFile: path.join(rel, "check.json"),
       artifactDir: null,
+      artifactExcluded: [],
+      artifactError: null,
       tempDir: "/tmp/gone",
       ...run.record,
     };
