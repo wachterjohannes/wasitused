@@ -46,7 +46,7 @@ const ENABLE_KEYS = [
 const INVOCATION_KEYS = ["toolNames", "bashPatterns", "skillNames"];
 const DOCUMENTATION_KEYS = ["pathPatterns", "skillNames"];
 
-export const DEFAULT_MODEL = "claude-opus-5";
+export const DEFAULT_MODEL = "claude-sonnet-5";
 const DEFAULT_MAX_TURNS = 40;
 const DEFAULT_AGENT_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_CHECK_TIMEOUT_MS = 60 * 1000;

@@ -51,7 +51,7 @@ describe("scenario validation", () => {
       },
       "test.json"
     );
-    assert.equal(config.agent.model, "claude-opus-5");
+    assert.equal(config.agent.model, "claude-sonnet-5");
     assert.equal(config.agent.maxTurns, 40);
     assert.equal(config.check.timeoutMs, 60000);
   });
