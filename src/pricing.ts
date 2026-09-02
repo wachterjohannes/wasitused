@@ -65,3 +65,30 @@ export function listPriceEquivalentUsd(
     1_000_000
   );
 }
+
+export type UsdSource = "agent-reported" | "price-table" | "unavailable";
+
+export interface UsdEstimate {
+  usd: number | null;
+  source: UsdSource;
+}
+
+/**
+ * The best available list-price-equivalent figure for a run.
+ *
+ * The agent's own total is preferred where it exists: it covers every model the
+ * run touched, including auxiliary ones this table does not price. Falling back
+ * to the table is fine but will under-count a run that used a helper model.
+ * Shared so the live run loop and the metrics pass cannot drift apart.
+ */
+export function bestEffortUsd(
+  model: string,
+  totals: TokenTotals,
+  reportedCostUsd: number | null
+): UsdEstimate {
+  if (reportedCostUsd !== null) return { usd: reportedCostUsd, source: "agent-reported" };
+  const fromTable = listPriceEquivalentUsd(model, totals);
+  return fromTable === null
+    ? { usd: null, source: "unavailable" }
+    : { usd: fromTable, source: "price-table" };
+}

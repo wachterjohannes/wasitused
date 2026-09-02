@@ -13,16 +13,18 @@ available and once without, then reads the transcripts back and tells you:
   does not count, and is tracked as a separate event.)
 - **Efficacy delta** — pass rate with the tool vs. without, from a
   machine-verifiable check against the artifact the agent left behind.
-- **Cost delta** — tokens, turns and wall clock, with vs. without.
+- **Cost delta** — tokens, turns and wall clock, with vs. without, each with
+  its spread and a 95% confidence interval.
 - **Over-use** — invocations in tasks where the tool cannot possibly help.
 
 Every effect is reported **conditioned on actual invocation**. A tool that was
 never called cannot have caused the difference you are looking at, and the
 report says so rather than letting you read a win into it.
 
-> **Status: early.** The runner loop, metrics and reporting work end to end
-> against Claude Code. The numbers in this README come from the bundled example
-> and are a demonstration, not a benchmark result.
+> **Status: early.** The runner loop, scenario piloting, budgeted suites,
+> metrics and reporting work end to end against Claude Code. The numbers in this
+> README come from the bundled example and are a demonstration, not a benchmark
+> result.
 
 ---
 
@@ -94,13 +96,70 @@ to tell you anything about tools in general.
 | | |
 | --- | --- |
 | `wasitused run <scenario.json>` | Run the scenario with and without the tool |
+| `wasitused pilot <scenario.json>` | Baseline only — is this scenario worth running at all? |
+| `wasitused suite <targets...>` | Run several scenarios under one shared budget |
 | `wasitused report <batch-dir>` | Recompute metrics from stored transcripts, write `report.html` |
+| `wasitused suite-report <suite-dir>` | Recompute a suite summary, write `report.html` |
 | `wasitused metrics <batch-dir>` | Print metrics as JSON |
 | `wasitused validate <scenario.json>` | Check a scenario config without running it |
 
 Useful flags: `-n` runs per condition (default 5), `-o` output directory,
 `--model` to override the pinned model, `--dry-run` to print the spawn plan,
 `--keep-temp` to keep each run's temp dir for debugging.
+
+### Pilot a scenario before you spend a battery on it
+
+A scenario only tells you something if the baseline leaves room to move. If the
+agent already passes unaided, your tool has no lever; if it never passes, there
+is nothing to improve. Either way the full battery buys you nothing.
+
+```bash
+wasitused pilot scenarios/greeting-locale/scenario.json -n 10
+```
+
+```
+pilot: greeting-locale  (baseline only, model claude-sonnet-5)
+  baseline pass rate : 50% (5/10, 95% CI 24%-76%)
+  verdict            : VALID
+  Baseline passed 5/10 (50%), 95% CI 24%-76% — inside the 20%-80% band.
+```
+
+Exit codes make it scriptable: **0** valid, **3** floor (<20%), **4** ceiling
+(>80%), **5** indeterminate. Indeterminate is deliberately distinct from floor —
+a scenario whose check never returned an answer has not been measured, and
+calling that "too hard" invents a finding out of a broken check.
+
+Scenarios marked `toolRelevant: false` are exempt: an over-use probe is supposed
+to sit at the ceiling.
+
+### Run a suite under a budget
+
+```bash
+wasitused suite scenarios/ --pilot -n 10 --budget-usd 5.00
+```
+
+Takes scenario files, a scenario directory, or a directory of scenario
+directories. The budget is enforced at two granularities: after every run (so
+one runaway scenario cannot blow the cap) and before every scenario (projected
+from what runs have cost so far, so a scenario that cannot be afforded in full
+is **skipped rather than truncated**). What ran and what did not is reported
+explicitly, and the suite exits **6** when it did not cover everything it was
+asked to.
+
+```
+  digit-sum          completed        VALID   baseline 50% (5/10, 95% CI 24%-76%)
+      tokens/run 1,050 (sd 0, 95% CI 1,050-1,050, n=10)
+  greeting-locale    skipped-budget           baseline n/a
+      projected $0.2000 would exceed the $0.1500 suite budget
+
+  spend: $0.1000 / 10,500 tokens over 10 runs
+  gate:  1 valid, 0 floor, 0 ceiling, 0 indeterminate
+```
+
+Every mean is reported with its spread and a 95% confidence interval (Student
+*t*, not the normal approximation — at N=5 the normal interval is about 30% too
+narrow, and a too-narrow interval is exactly what makes a pilot look
+conclusive).
 
 ## Writing a scenario
 

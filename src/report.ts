@@ -49,8 +49,16 @@ function rateCell(r: Rate): string {
 
 function summaryCell(s: Summary, digits = 1): string {
   if (s.mean === null) return `<span class="na">n/a</span>`;
-  const sd = s.sd === null ? "sd n/a (n=1)" : `sd ${num(s.sd, digits)}`;
-  return `<strong>${num(s.mean, digits)}</strong> <span class="ci">${sd}, n=${s.n}</span>`;
+  if (s.n === 1) {
+    return `<strong>${num(s.mean, digits)}</strong> <span class="ci">n=1, no spread</span>`;
+  }
+  const ci = s.ci95
+    ? `, 95% CI ${num(s.ci95[0], digits)}\u2013${num(s.ci95[1], digits)}`
+    : "";
+  return `<strong>${num(s.mean, digits)}</strong> <span class="ci">sd ${num(
+    s.sd,
+    digits
+  )}${ci}, n=${s.n}</span>`;
 }
 
 function conditionTable(m: BatchMetrics): string {
@@ -223,6 +231,14 @@ ${
     ? `<div class="callout critical"><strong>Batch aborted.</strong> ${esc(
         m.abortReason ?? ""
       )}</div>`
+    : ""
+}
+${
+  m.singleCondition && m.runs.length > 0
+    ? `<div class="callout"><strong>Single-condition batch.</strong> Only
+       <code>${esc(m.conditionsRun.join(", ") || "no")}</code> ran, so there is no
+       with-tool/baseline comparison here — the efficacy and cost deltas below are
+       null by construction. This is a pilot, not a result.</div>`
     : ""
 }
 ${

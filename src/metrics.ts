@@ -17,10 +17,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  bestEffortUsd,
   COST_CAVEAT,
   emptyTotals,
-  listPriceEquivalentUsd,
   type TokenTotals,
+  type UsdSource,
 } from "./pricing";
 import {
   meanDelta,
@@ -62,7 +63,7 @@ export interface RunMetrics {
    * model it touched; "price-table" applies this harness's per-model list
    * prices to the token counts. Neither is a billed amount.
    */
-  usdSource: "agent-reported" | "price-table" | "unavailable";
+  usdSource: UsdSource;
   transcriptComplete: boolean;
   transcriptMalformedLines: number;
   exitCode: number | null;
@@ -132,6 +133,10 @@ export interface OverUse {
 export interface BatchMetrics {
   schemaVersion: 1;
   batchId: string;
+  /** Conditions this batch actually ran. A pilot runs baseline only. */
+  conditionsRun: Condition[];
+  /** True when only one condition ran, so no with/without comparison exists. */
+  singleCondition: boolean;
   scenarioId: string;
   toolName: string;
   toolRelevant: boolean;
@@ -232,6 +237,7 @@ export function metricsForRun(
     batch.scenarioSnapshot.tool
   );
   const check = readJson<CheckRecord>(path.resolve(batchDir, record.checkFile));
+  const usd = bestEffortUsd(record.model, analysis.totals, analysis.reportedCostUsd);
 
   let exclusion: Exclusion | null = null;
   let exclusionReason: string | null = null;
@@ -274,15 +280,8 @@ export function metricsForRun(
     tokens: analysis.totals,
     tokensSource: analysis.totalsSource,
     wallClockMs: record.wallClockMs,
-    usdListEquivalent:
-      analysis.reportedCostUsd ??
-      listPriceEquivalentUsd(record.model, analysis.totals),
-    usdSource:
-      analysis.reportedCostUsd !== null
-        ? "agent-reported"
-        : listPriceEquivalentUsd(record.model, analysis.totals) !== null
-          ? "price-table"
-          : "unavailable",
+    usdListEquivalent: usd.usd,
+    usdSource: usd.source,
     transcriptComplete: analysis.complete,
     transcriptMalformedLines: analysis.malformedLines,
     exitCode: record.exitCode,
@@ -463,6 +462,12 @@ export function computeBatchMetrics(batchDir: string): BatchMetrics {
   if (counts.withToolUsable > 0 && counts.withToolInvoked === 0) {
     warnings.push(efficacy.note);
   }
+  if (runs.length > 0 && CONDITIONS.filter((c) => conditions[c].runsAttempted > 0).length < 2) {
+    warnings.push(
+      "This batch ran only one condition, so no with-tool/baseline comparison exists. " +
+        "Every delta below is null by construction — this is a pilot, not a result."
+    );
+  }
   const lowerBound = runs.filter(
     (r) => r.usable && r.tokensSource === "deduped-messages"
   );
@@ -488,9 +493,15 @@ export function computeBatchMetrics(batchDir: string): BatchMetrics {
     );
   }
 
+  const conditionsRun = CONDITIONS.filter(
+    (c) => conditions[c].runsAttempted > 0
+  );
+
   return {
     schemaVersion: 1,
     batchId: batch.batchId,
+    conditionsRun,
+    singleCondition: conditionsRun.length < 2,
     scenarioId: batch.scenarioId,
     toolName: batch.scenarioSnapshot.tool.name,
     toolRelevant: batch.scenarioSnapshot.toolRelevant,
@@ -507,4 +518,24 @@ export function computeBatchMetrics(batchDir: string): BatchMetrics {
     overUse,
     warnings,
   };
+}
+
+/**
+ * What a batch actually spent, including runs that turned out to be unusable.
+ * Excluding duds from *metrics* is correct; excluding them from *spend* would
+ * be lying about the bill. Duds cost nothing by definition, but an unparseable
+ * run cost whatever it burned before the transcript broke.
+ */
+export function batchSpend(m: BatchMetrics): {
+  tokens: number;
+  usd: number | null;
+  runs: number;
+} {
+  let tokens = 0;
+  let usd: number | null = null;
+  for (const run of m.runs) {
+    tokens += run.tokens.total;
+    if (run.usdListEquivalent !== null) usd = (usd ?? 0) + run.usdListEquivalent;
+  }
+  return { tokens, usd, runs: m.runs.length };
 }

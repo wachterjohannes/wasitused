@@ -1,6 +1,6 @@
 {
   "name": "wasitused",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Measure whether a coding agent actually invokes your tool — and whether invoking it helps.",
   "license": "MIT",
   "author": "Johannes Wachter",

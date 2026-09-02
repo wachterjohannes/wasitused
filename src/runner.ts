@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { prepareIsolatedRun, inspectCredentials, stripInheritedAgentEnv } from "./isolation";
+import { bestEffortUsd } from "./pricing";
 import { analyzeTranscriptFile } from "./transcript";
 import type {
   BatchRecord,
@@ -21,7 +22,7 @@ import type {
 } from "./types";
 import { CONDITIONS } from "./types";
 
-export const HARNESS_VERSION = "0.1.0";
+export const HARNESS_VERSION = "0.2.0";
 
 /** Consecutive zero-cost runs that abort a batch. */
 export const DUD_GUARD_THRESHOLD = 3;
@@ -91,11 +92,37 @@ export const spawnClaudeAgent: SpawnAgentFn = (req) =>
     });
   });
 
+/** What one finished run cost, handed to the budget hook. */
+export interface RunProgress {
+  runId: string;
+  condition: Condition;
+  index: number;
+  tokens: number;
+  usd: number | null;
+  invoked: boolean;
+  solved: boolean | null;
+  wallClockMs: number;
+  /** Duds are reported too — they cost nothing, but the caller may want to know. */
+  zeroCost: boolean;
+}
+
 export interface RunBatchOptions {
   n: number;
   outDir: string;
   credentialsPath: string;
   model?: string;
+  /**
+   * Which conditions to run, in the order they are interleaved.
+   * Defaults to both. `pilot` passes ["baseline"] only.
+   */
+  conditions?: Condition[];
+  /**
+   * Called after every completed run. Returning a stop reason ends the batch
+   * cleanly (recorded as stoppedEarly, not as an abort) — this is how the suite
+   * enforces a shared budget at run granularity rather than only between
+   * scenarios.
+   */
+  onRunComplete?: (progress: RunProgress) => string | null;
   keepTemp?: boolean;
   spawnAgent?: SpawnAgentFn;
   agentCommand?: string;
@@ -342,10 +369,13 @@ export async function runOnce(
  * — rate limits, model routing, a token nearing expiry — hits both conditions
  * evenly instead of loading onto whichever ran last.
  */
-export function runOrder(n: number): Array<{ condition: Condition; index: number }> {
+export function runOrder(
+  n: number,
+  conditions: Condition[] = CONDITIONS
+): Array<{ condition: Condition; index: number }> {
   const order: Array<{ condition: Condition; index: number }> = [];
   for (let i = 1; i <= n; i++) {
-    for (const condition of CONDITIONS) order.push({ condition, index: i });
+    for (const condition of conditions) order.push({ condition, index: i });
   }
   return order;
 }
@@ -361,6 +391,7 @@ export async function runBatch(
   const batchDir = path.join(opts.outDir, batchId);
   fs.mkdirSync(path.join(batchDir, "runs"), { recursive: true });
 
+  const conditions = opts.conditions ?? CONDITIONS;
   const credential = inspectCredentials(opts.credentialsPath);
   log(
     `credential: source=${credential.source} remaining=${
@@ -392,6 +423,9 @@ export async function runBatch(
     endedAt: null,
     aborted: false,
     abortReason: null,
+    conditions,
+    stoppedEarly: false,
+    stopReason: null,
     runDirs: [],
     harnessVersion: HARNESS_VERSION,
   };
@@ -406,7 +440,7 @@ export async function runBatch(
   const dudRunIds: string[] = [];
 
   try {
-    for (const step of runOrder(opts.n)) {
+    for (const step of runOrder(opts.n, conditions)) {
       const { record, check } = await runOnce(
         scenario,
         step.condition,
@@ -427,6 +461,26 @@ export async function runBatch(
           `turns=${analysis.turns} invoked=${analysis.invoked} ` +
           `solved=${String(check.solved)} ${Math.round(record.wallClockMs / 1000)}s`
       );
+
+      if (opts.onRunComplete) {
+        const stop = opts.onRunComplete({
+          runId: record.runId,
+          condition: record.condition,
+          index: record.index,
+          tokens: analysis.totals.total,
+          usd: bestEffortUsd(record.model, analysis.totals, analysis.reportedCostUsd).usd,
+          invoked: analysis.invoked,
+          solved: check.solved,
+          wallClockMs: record.wallClockMs,
+          zeroCost,
+        });
+        if (stop) {
+          batch.stoppedEarly = true;
+          batch.stopReason = stop;
+          log(`batch stopped early: ${stop}`);
+          break;
+        }
+      }
 
       if (zeroCost) {
         consecutiveDuds++;

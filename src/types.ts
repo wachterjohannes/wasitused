@@ -151,6 +151,11 @@ export interface BatchRecord {
   endedAt: string | null;
   aborted: boolean;
   abortReason: string | null;
+  /** Conditions this batch was configured to run. A pilot runs baseline only. */
+  conditions: Condition[];
+  /** True when a budget hook ended the batch cleanly before all runs finished. */
+  stoppedEarly: boolean;
+  stopReason: string | null;
   runDirs: string[];
   harnessVersion: string;
 }

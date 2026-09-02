@@ -187,9 +187,53 @@ thin N, and apply a multiplicity correction when comparing across many scenarios
 Every rate here carries a **Wilson score interval**, not a normal approximation.
 At N=5, a normal interval around 5/5 collapses to zero width, which reads as
 certainty the data does not contain. Wilson gives 5/5 a 95% interval of roughly
-57%–100%, which is honest about what five runs can tell you.
+57%–100%, which is honest about what five runs can tell you. Means (tokens,
+turns, wall clock, cost) carry a **Student *t*** interval for the same reason:
+at n=5 the normal approximation is about 30% too narrow, and a too-narrow
+interval is precisely what makes a pilot look conclusive. An interval is never
+reported for n=1 — there is no spread in one observation to report.
 
-## 8. The baseline must actually be a baseline
+`wasitused pilot` applies this gate directly. It runs the baseline arm only and
+exits 0 for valid, 3 for floor, 4 for ceiling, and 5 for indeterminate, so a
+scenario battery can be gated in a script rather than by eye. **Indeterminate is
+a distinct outcome from floor**, deliberately: a scenario whose success check
+never returned a determinate answer has not been measured at all, and recording
+that as "too hard" would manufacture a finding out of a broken check — and would
+cut a scenario that may be perfectly good.
+
+## 8. The budget is an input, not a discovery
+
+A full battery is hundreds of runs. "How much did that cost?" is a question you
+want answered before the runs, not after, so the cap is a first-class argument
+to a suite rather than something you watch and hope about.
+
+Enforcing it at only one granularity leaks in one of two directions:
+
+- **Per run only:** the cap holds, but scenarios get cut off halfway. Half a
+  scenario is not a cheaper scenario, it is an unusable one — you paid for runs
+  that cannot be compared against anything.
+- **Per scenario only:** whole scenarios are clean, but a single runaway one
+  blows the cap before anyone checks.
+
+So both: the running total is checked after every finished run, *and* the next
+scenario's cost is projected from what runs have cost so far, with a scenario
+that cannot be afforded in full skipped rather than started. With no runs yet
+there is nothing to project from, so the first scenario always starts and the
+per-run guard is what protects the cap.
+
+The reporting rule matters as much as the enforcement. A suite that quietly runs
+six of ten scenarios and reports as if it ran ten is worse than one that refuses
+to start: the numbers look complete. So every scenario appears in the output with
+a status — completed, budget-stopped, skipped-budget, aborted-duds, failed — the
+summary says out loud that the sweep is partial, and the command exits non-zero
+when it did not cover what it was asked to cover.
+
+Spend accounting includes runs that turned out to be unusable. Excluding duds
+from *metrics* is correct; excluding them from *spend* would be lying about the
+bill. A dud costs nothing by definition, but a run whose transcript broke
+half-way still burned everything it burned before that.
+
+## 9. The baseline must actually be a baseline
 
 If the spawned agent inherits the host's config directory, environment or
 working tree, then every "baseline" run silently includes whatever skills,
@@ -208,7 +252,7 @@ condition and flags the batch as an isolation leak if it finds any. The baseline
 has no access to the tool; if it called it, something in the toggle or the
 matchers is wrong and no number from that batch should be trusted.
 
-## 9. Metrics must be recomputable from stored artifacts
+## 10. Metrics must be recomputable from stored artifacts
 
 Transcripts are the source of truth. Metrics are a separate pass over the files
 a batch left on disk — no agent process is involved, and `wasitused report` on
@@ -225,7 +269,7 @@ The scenario config is snapshotted into `batch.json` for the same reason. Edit
 or delete the scenario file afterwards and the batch still recomputes, using the
 matchers that were actually in force when it ran.
 
-## 10. Documented robustness does not transfer
+## 11. Documented robustness does not transfer
 
 Everything above can be true, written down, and still absent from your code.
 A lesson learned on one implementation does not carry over to a rewrite just
@@ -235,7 +279,11 @@ So each item here has a test that *deliberately causes* the failure and asserts
 the harness handles it: a simulated dead credential producing exit-0 zero-cost
 runs, a transcript truncated mid-write, a transcript with streaming-duplicated
 usage and a known correct total, a check that returns indeterminate, a config
-with a misspelled matcher key, an isolation toggle that leaks into the baseline.
+with a misspelled matcher key, an isolation toggle that leaks into the baseline,
+a budget that runs out mid-suite, a scenario that cannot be afforded in full, a
+pass rate sitting exactly on each edge of the gate, a dud that would otherwise
+drag a scenario into the floor, and an unmeasurable pass rate that must come out
+indeterminate rather than floor.
 
 If you fork this or write your own, re-earn them the same way. The tests are the
 part that transfers.
