@@ -196,6 +196,7 @@ plugin system, on purpose.
     // What counts as only reading about it. Never merged with the above.
     "documentation": {
       "pathPatterns": ["phrasebook[/\\\\]SKILL\\.md"],
+      "bashPatterns": ["phrasebook --help"],   // listing a CLI surface != using it
       "skillNames": ["phrasebook"]
     }
   }

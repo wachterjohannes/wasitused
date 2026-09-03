@@ -352,3 +352,63 @@ describe("malformed and truncated transcripts", () => {
     assert.equal(a.parseable, false);
   });
 });
+
+describe("CLI-shaped tools: listing is not using", () => {
+  const CLI_TOOL = {
+    name: "mate",
+    enable: { fixtureFiles: ["../_tool/mate"] },
+    invocation: { bashPatterns: ["vendor/bin/mate\\s+tools:call"] },
+    documentation: { bashPatterns: ["vendor/bin/mate\\s+tools:(list|inspect)"] },
+  };
+
+  test("`tools:call` is an invocation", () => {
+    const a = analyzeTranscriptText(
+      transcript([
+        initLine(),
+        assistantLine("m1", { output_tokens: 5 }, [
+          bashCall("t1", "vendor/bin/mate tools:call phpunit-run --format=json"),
+        ]),
+        resultLine(),
+      ]),
+      CLI_TOOL
+    );
+    assert.equal(a.invoked, true);
+    assert.equal(a.invocationCount, 1);
+    assert.equal(a.documentationCount, 0);
+  });
+
+  test("`tools:list` is documentation, not adoption", () => {
+    const a = analyzeTranscriptText(
+      transcript([
+        initLine(),
+        assistantLine("m1", { output_tokens: 5 }, [
+          bashCall("t1", "vendor/bin/mate tools:list"),
+        ]),
+        resultLine(),
+      ]),
+      CLI_TOOL
+    );
+    assert.equal(a.invoked, false, "listing the surface is not using it");
+    assert.equal(a.readDocs, true);
+    assert.equal(a.documentationCount, 1);
+  });
+
+  test("a command matching both stays an invocation", () => {
+    const both = {
+      ...CLI_TOOL,
+      documentation: { bashPatterns: ["vendor/bin/mate"] },
+    };
+    const a = analyzeTranscriptText(
+      transcript([
+        initLine(),
+        assistantLine("m1", { output_tokens: 5 }, [
+          bashCall("t1", "vendor/bin/mate tools:call phpstan-analyse"),
+        ]),
+        resultLine(),
+      ]),
+      both
+    );
+    assert.equal(a.invocationCount, 1);
+    assert.equal(a.documentationCount, 0);
+  });
+});

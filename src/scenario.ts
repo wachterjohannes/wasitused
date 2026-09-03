@@ -45,7 +45,7 @@ const ENABLE_KEYS = [
   "appendSystemPrompt",
 ];
 const INVOCATION_KEYS = ["toolNames", "bashPatterns", "skillNames"];
-const DOCUMENTATION_KEYS = ["pathPatterns", "skillNames"];
+const DOCUMENTATION_KEYS = ["pathPatterns", "bashPatterns", "skillNames"];
 
 export const DEFAULT_MODEL = "claude-sonnet-5";
 const DEFAULT_MAX_TURNS = 40;
@@ -293,6 +293,23 @@ export function validateScenario(
           problems
         );
         if (pathPatterns) documentation.pathPatterns = pathPatterns;
+        const docBash = stringArray(
+          raw.tool.documentation.bashPatterns,
+          "tool.documentation.bashPatterns",
+          problems
+        );
+        if (docBash) documentation.bashPatterns = docBash;
+        for (const pattern of docBash ?? []) {
+          try {
+            new RegExp(pattern);
+          } catch (err) {
+            problems.push(
+              `tool.documentation.bashPatterns: "${pattern}" is not a valid regex (${
+                (err as Error).message
+              })`
+            );
+          }
+        }
         const docSkillNames = stringArray(
           raw.tool.documentation.skillNames,
           "tool.documentation.skillNames",

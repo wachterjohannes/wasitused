@@ -137,6 +137,20 @@ function classifyToolUse(
     }
   }
 
+  // Listing or inspecting a CLI tool surface describes it without using it.
+  // Reached only after the invocation matchers above have declined.
+  if (toolName === "Bash" && typeof input.command === "string") {
+    for (const pattern of tool.documentation?.bashPatterns ?? []) {
+      if (new RegExp(pattern).test(input.command)) {
+        return {
+          kind: "documentation",
+          matchedBy: `documentation.bashPatterns:${pattern}`,
+          detail: input.command.slice(0, 200),
+        };
+      }
+    }
+  }
+
   // Loading a skill that merely documents the tool is a docs read, not a call.
   if (toolName === "Skill") {
     const skill = input.skill ?? input.name ?? input.command;

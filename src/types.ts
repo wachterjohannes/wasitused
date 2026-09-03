@@ -35,6 +35,14 @@ export interface ToolDocumentationMatchers {
   /** Regexes matched against path-ish inputs of Read/Glob/Grep calls. */
   pathPatterns?: string[];
   /**
+   * Regexes matched against Bash commands that only *describe* the tool
+   * surface rather than use it — `mate tools:list`, `--help`, a dry-run
+   * lister. Needed because a CLI-shaped tool is discovered by running a
+   * command, not by reading a file. Invocation matchers are tried first, so a
+   * command that is both stays an invocation.
+   */
+  bashPatterns?: string[];
+  /**
    * Skill names whose *loading* only pulls documentation into context.
    * Loading an Agent Skill that describes a CLI is reading the docs; running
    * the CLI it describes is the invocation. Put the skill here and the command
