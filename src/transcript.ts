@@ -27,10 +27,20 @@ export type ToolEventKind = "invocation" | "documentation";
 export interface ToolEvent {
   kind: ToolEventKind;
   /**
-   * Whether the tool call came back an error. null when no result was found
-   * (the run was cut off before the tool answered) — not the same as success.
+   * Whether the tool call came back an error. null when the outcome is not
+   * knowable — no result was recorded, or the shell masked the exit status
+   * (see `statusMasked`). null is never the same as success.
    */
   failed: boolean | null;
+  /**
+   * True when the tool ran inside a shell construct whose exit status is not
+   * the tool's own — `mate tools:call x | head` exits with head's status, so a
+   * failing tool reports success. Measured in the wild: a tool that failed
+   * 100% of the time showed a 27% failure rate purely because agents piped it
+   * three quarters of the time. Masked calls are counted as unknown, never as
+   * successes.
+   */
+  statusMasked: boolean;
   /** The transcript tool-call name, e.g. "Bash" or "mcp__phrasebook__lookup". */
   toolName: string;
   /** Why the matcher fired — kept so a report can show its work. */
@@ -80,6 +90,14 @@ export interface TranscriptAnalysis {
    * so the two are never collapsed.
    */
   invocationFailures: number;
+  /**
+   * Invocations whose outcome could not be established — no result recorded,
+   * or the shell masked the exit status. These are excluded from the failure
+   * rate's denominator rather than counted as successes.
+   */
+  invocationStatusUnknown: number;
+  /** Invocations with a knowable outcome. The only honest denominator. */
+  invocationDeterminate: number;
   documentationCount: number;
   invoked: boolean;
   readDocs: boolean;
@@ -99,11 +117,25 @@ function matchesToolName(name: string, patterns: string[]): string | null {
   return null;
 }
 
+/**
+ * Does this shell command's exit status still belong to the tool?
+ *
+ * Deliberately conservative: any pipeline or command separator makes the
+ * answer "cannot tell", even in cases where the status would in fact survive.
+ * Over-reporting "unknown" costs a little precision; under-reporting it
+ * invents successes, which is the failure this exists to prevent.
+ */
+export function exitStatusMasked(command: string): boolean {
+  // Strip quoted spans so separators inside string literals do not count.
+  const bare = command.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+  return /\|\||\||;|&&/.test(bare);
+}
+
 function classifyToolUse(
   toolName: string,
   input: Record<string, unknown>,
   tool: ToolUnderTest
-): { kind: ToolEventKind; matchedBy: string; detail: string } | null {
+): { kind: ToolEventKind; matchedBy: string; detail: string; statusMasked?: boolean } | null {
   // Invocation wins: a call is a call, even if the path also looks like docs.
   const byName = matchesToolName(toolName, tool.invocation.toolNames ?? []);
   if (byName) {
@@ -117,6 +149,7 @@ function classifyToolUse(
           kind: "invocation",
           matchedBy: `bashPatterns:${pattern}`,
           detail: input.command.slice(0, 200),
+          statusMasked: exitStatusMasked(input.command),
         };
       }
     }
@@ -284,6 +317,7 @@ export function analyzeTranscriptText(
             events.push({
               kind: hit.kind,
               failed: null,
+              statusMasked: hit.statusMasked === true,
               toolName,
               matchedBy: hit.matchedBy,
               blockId,
@@ -332,6 +366,11 @@ export function analyzeTranscriptText(
     totals.input + totals.output + totals.cacheRead + totals.cacheCreation;
 
   for (const event of events) {
+    if (event.statusMasked) {
+      // The shell, not the tool, decided this exit code. Unknowable.
+      event.failed = null;
+      continue;
+    }
     const failed = resultErrors.get(event.blockId);
     event.failed = failed === undefined ? null : failed;
   }
@@ -345,6 +384,8 @@ export function analyzeTranscriptText(
   const invocations = events.filter((e) => e.kind === "invocation");
   const invocationCount = invocations.length;
   const invocationFailures = invocations.filter((e) => e.failed === true).length;
+  const invocationStatusUnknown = invocations.filter((e) => e.failed === null).length;
+  const invocationDeterminate = invocations.length - invocationStatusUnknown;
   const documentationCount = events.filter((e) => e.kind === "documentation").length;
 
   return {
@@ -367,6 +408,8 @@ export function analyzeTranscriptText(
     events,
     invocationCount,
     invocationFailures,
+    invocationStatusUnknown,
+    invocationDeterminate,
     documentationCount,
     invoked: invocationCount > 0,
     readDocs: documentationCount > 0,
@@ -401,6 +444,8 @@ export function analyzeTranscriptFile(
       events: [],
       invocationCount: 0,
       invocationFailures: 0,
+      invocationStatusUnknown: 0,
+      invocationDeterminate: 0,
       documentationCount: 0,
       invoked: false,
       readDocs: false,

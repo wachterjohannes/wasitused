@@ -412,3 +412,77 @@ describe("CLI-shaped tools: listing is not using", () => {
     assert.equal(a.documentationCount, 0);
   });
 });
+
+describe("a shell-masked exit status is unknown, not success", () => {
+  const CLI_TOOL = {
+    name: "mate",
+    enable: { fixtureFiles: ["../_tool/mate"] },
+    invocation: { bashPatterns: ["mate\\s+tools:call"] },
+  };
+
+  function run(command: string, isError: boolean | undefined) {
+    return analyzeTranscriptText(
+      transcript([
+        initLine(),
+        assistantLine("m1", { output_tokens: 5 }, [bashCall("t1", command)]),
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "t1",
+                ...(isError === undefined ? {} : { is_error: isError }),
+                content: "…",
+              },
+            ],
+          },
+        }),
+        resultLine(),
+      ]),
+      CLI_TOOL
+    );
+  }
+
+  test("a bare command is scored normally", () => {
+    const a = run("vendor/bin/mate tools:call phpstan-analyse", true);
+    assert.equal(a.invocationFailures, 1);
+    assert.equal(a.invocationDeterminate, 1);
+    assert.equal(a.invocationStatusUnknown, 0);
+  });
+
+  test("a piped command reports success it cannot vouch for — so it is unknown", () => {
+    // `... | head` exits with head's status. This exact pattern made a tool
+    // that failed 100% of the time read as 27%.
+    const a = run("vendor/bin/mate tools:call phpstan-analyse 2>&1 | head -20", false);
+    assert.equal(a.invoked, true, "it is still adoption");
+    assert.equal(a.invocationStatusUnknown, 1);
+    assert.equal(a.invocationDeterminate, 0);
+    assert.equal(a.invocationFailures, 0, "unknown must not be counted as a failure either");
+    assert.equal(a.events[0]?.statusMasked, true);
+    assert.equal(a.events[0]?.failed, null);
+  });
+
+  test("`||` and `;` mask the status too", () => {
+    for (const cmd of [
+      "vendor/bin/mate tools:call x || echo failed",
+      "vendor/bin/mate tools:call x; echo done",
+    ]) {
+      const a = run(cmd, false);
+      assert.equal(a.invocationStatusUnknown, 1, cmd);
+    }
+  });
+
+  test("a separator inside a quoted string does not count as masking", () => {
+    const a = run("vendor/bin/mate tools:call monolog-search --term='a | b'", true);
+    assert.equal(a.events[0]?.statusMasked, false);
+    assert.equal(a.invocationFailures, 1);
+  });
+
+  test("2>&1 alone does not mask the status", () => {
+    const a = run("vendor/bin/mate tools:call phpstan-analyse 2>&1", true);
+    assert.equal(a.events[0]?.statusMasked, false);
+    assert.equal(a.invocationFailures, 1);
+  });
+});

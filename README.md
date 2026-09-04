@@ -13,7 +13,9 @@ available and once without, then reads the transcripts back and tells you:
   does not count, and is tracked as a separate event. A call that came back an
   error still counts as adoption — the agent did call it — but is reported
   separately, because "they used it and it broke" is a different message than
-  "they used it and it worked".)
+  "they used it and it worked". A call the shell wrapped in a pipeline is
+  scored *unknown* rather than successful, since the exit status is not the
+  tool's.)
 - **Efficacy delta** — pass rate with the tool vs. without, from a
   machine-verifiable check against the artifact the agent left behind.
 - **Cost delta** — tokens, turns and wall clock, with vs. without, each with

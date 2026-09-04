@@ -49,6 +49,10 @@ export interface RunMetrics {
   invocationCount: number;
   /** Invocations that came back an error. Still counted as adoption. */
   invocationFailures: number;
+  /** Invocations whose outcome was unknowable (no result, or shell-masked). */
+  invocationStatusUnknown: number;
+  /** Invocations with a knowable outcome — the failure-rate denominator. */
+  invocationDeterminate: number;
   documentationCount: number;
   /** Read the tool's docs but never called it — the distinction adoption depends on. */
   documentationOnly: boolean;
@@ -88,8 +92,18 @@ export interface ConditionMetrics {
   excluded: { dudZeroCost: number; unparseableTranscript: number; missingRunRecord: number };
   usable: number;
   adoption: Rate;
-  /** Failed calls over all calls made. Denominator is invocations, not runs. */
-  invocationHealth: { calls: number; failed: number; failureRate: Rate };
+  /**
+   * Call health. `failureRate` is over calls with a KNOWABLE outcome only —
+   * a call whose exit status the shell masked cannot be scored either way, and
+   * counting it as a success is how a 100%-broken tool once read as 27%.
+   */
+  invocationHealth: {
+    calls: number;
+    failed: number;
+    statusUnknown: number;
+    determinate: number;
+    failureRate: Rate;
+  };
   documentationOnly: Rate;
   efficacy: {
     solved: number;
@@ -218,6 +232,8 @@ export function metricsForRun(
       invoked: false,
       invocationCount: 0,
       invocationFailures: 0,
+      invocationStatusUnknown: 0,
+      invocationDeterminate: 0,
       documentationCount: 0,
       documentationOnly: false,
       solved: null,
@@ -278,6 +294,8 @@ export function metricsForRun(
     invoked: analysis.invoked,
     invocationCount: analysis.invocationCount,
     invocationFailures: analysis.invocationFailures,
+    invocationStatusUnknown: analysis.invocationStatusUnknown,
+    invocationDeterminate: analysis.invocationDeterminate,
     documentationCount: analysis.documentationCount,
     documentationOnly: analysis.readDocs && !analysis.invoked,
     solved,
@@ -323,7 +341,9 @@ function conditionMetrics(
     invocationHealth: (() => {
       const calls = usable.reduce((a, r) => a + r.invocationCount, 0);
       const failed = usable.reduce((a, r) => a + r.invocationFailures, 0);
-      return { calls, failed, failureRate: rate(failed, calls) };
+      const statusUnknown = usable.reduce((a, r) => a + r.invocationStatusUnknown, 0);
+      const determinate = calls - statusUnknown;
+      return { calls, failed, statusUnknown, determinate, failureRate: rate(failed, determinate) };
     })(),
     documentationOnly: rate(
       usable.filter((r) => r.documentationOnly).length,
@@ -455,9 +475,17 @@ export function computeBatchMetrics(batchDir: string): BatchMetrics {
   }
   for (const c of CONDITIONS) {
     const health = conditions[c].invocationHealth;
+    if (health.statusUnknown > 0) {
+      warnings.push(
+        `${c}: ${health.statusUnknown} of ${health.calls} tool call(s) have an unknowable ` +
+          "outcome — the shell masked the exit status (a pipeline or command separator), " +
+          "or no result was recorded. They are excluded from the failure rate rather than " +
+          "counted as successes."
+      );
+    }
     if (health.failed > 0) {
       warnings.push(
-        `${c}: ${health.failed} of ${health.calls} tool call(s) returned an error. ` +
+        `${c}: ${health.failed} of ${health.determinate} determinate tool call(s) returned an error. ` +
           "Those still count as adoption — the agent did call the tool — but a cost or " +
           "efficacy difference in those runs reflects a broken tool, not a used one."
       );

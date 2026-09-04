@@ -86,10 +86,20 @@ function conditionTable(m: BatchMetrics): string {
     ${row("Usable runs", (c) => String(c.usable))}
     ${row("Adoption — tool actually invoked", (c) => rateCell(c.adoption))}
     ${row(
-      "Tool calls that returned an error",
+      "Tool calls with an unknowable outcome",
       (c) =>
         c.invocationHealth.calls === 0
           ? '<span class="na">no calls</span>'
+          : `${c.invocationHealth.statusUnknown}/${c.invocationHealth.calls}` +
+            (c.invocationHealth.statusUnknown > 0
+              ? '<div class="warnlet">the shell masked the exit status (pipeline or separator), or no result was recorded — excluded from the rate below, never scored as success</div>'
+              : "")
+    )}
+    ${row(
+      "Tool calls that returned an error",
+      (c) =>
+        c.invocationHealth.determinate === 0
+          ? '<span class="na">no determinate calls</span>'
           : `${rateCell(c.invocationHealth.failureRate)}${
               c.invocationHealth.failed > 0
                 ? '<div class="warnlet">a failed call is still adoption, but any effect in those runs is a broken tool, not a used one</div>'

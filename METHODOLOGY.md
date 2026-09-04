@@ -33,6 +33,21 @@ by separate config, and validation rejects a scenario that puts the same skill
 in both. Build the distinction in on day one; retrofitting it means re-reading
 every transcript you have.
 
+**A shell can hide a tool's failure.** When the tool is a CLI, the agent often
+wraps it: `mate tools:call phpstan-analyse | head -20`. That pipeline exits with
+`head`'s status, so the harness sees success for a call that failed. This is not
+hypothetical — it produced a wrong headline in this project's own work. A tool
+that failed **100%** of the time was reported at **27%**, and a later run at
+**85%**, purely because the two conditions piped the command at different rates
+(73% vs 15%). The apparent "regression" was entirely an artifact.
+
+So an invocation whose exit status the shell may not own is scored **unknown**,
+never success: it is excluded from the failure rate's denominator and counted
+separately. The detection is deliberately conservative — any pipeline or
+command separator marks the call unknown, even where the status would in fact
+have survived. Losing a little precision costs nothing; inventing successes
+costs a finding.
+
 **A call that errors is still a call.** Adoption asks whether the agent chose to
 invoke the tool, and it chose whether or not the tool then worked. So a failed
 invocation counts toward adoption — but it is reported separately, because the
