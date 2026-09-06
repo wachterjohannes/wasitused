@@ -452,3 +452,34 @@ difference here legible when the headline numbers did not.
 
 The general form: an intervention can improve a ratio by shrinking its
 denominator. Record the denominator.
+
+## 15. Check that the fixture installs the whole product, not just the binary
+
+A tool is rarely only its code. It ships documentation the agent reads, and that
+documentation is part of what you are measuring.
+
+In one battery the tool under test had four sibling extensions, each shipping a
+skill file describing when and how to use it. `skills:list` inside the fixture
+reported all four as `not installed`, and the ones that were installed as
+`stale`. The fixture had been built before those files existed and nobody had
+re-run the install step since. Every measurement taken on that fixture had
+therefore compared an agent holding the tool against an agent holding nothing,
+with the tool's own usage guidance absent from both sides.
+
+The effect was not hypothetical. Installing the skills changed which mode agents
+asked for on their first call — from one mode in nineteen of nineteen runs to a
+three-way spread — and made them use a tool that had previously been invoked
+zero times. Behaviour moved. Cost did not, which is itself worth knowing, but it
+could as easily have gone the other way, and several earlier results had been
+reported without anyone knowing the guidance was missing.
+
+So enumerate the product's agent-facing surface and assert each part is present
+and current in the fixture: the binary, its configuration, and every document
+the agent might read. Where the tool can report its own installation state, make
+the harness read it and fail loudly on anything that is not current, the same
+way it fails on a dead credential. A stale document is quieter than a stale
+credential and just as capable of invalidating the run.
+
+The general form of the mistake is the one in §12 wearing different clothes.
+There the fixture could not reach the changed code; here it could not reach the
+changed prose. Both produce a measurement of something other than the change.
