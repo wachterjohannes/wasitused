@@ -400,3 +400,29 @@ The related trap is the one directly above it in the stack: a fix that throws
 can be swallowed by a catch-all fallback and still look like a plausible
 success. Verify which code path produced the output, not just that the output
 changed size.
+
+## 13. Measure at the agent's boundary, not at the tool's return statement
+
+A tool returns a string. What reaches the agent is whatever the surrounding
+runner does with that string, and the two can differ by a large constant.
+
+In one measured case a tool returned 233 bytes of compact JSON and the agent
+received 4,072 bytes, because the CLI rendered the result as a padded
+human-readable table: every column widened to the largest cell, plus two
+horizontal rules at that width. The amplification ran between 3.4x and 5.5x
+depending on the shape of the response. None of it came from the tool.
+
+The consequence for measurement is direct. Instrumenting the tool's return
+value would have understated the agent's input by four-fold and would have
+ranked two candidate designs incorrectly, because the amplification scales with
+the largest single value in a response rather than with its total size — so a
+change that halves total content but doubles the largest field makes things
+worse while looking better.
+
+Take the number from the transcript, where the tool result is recorded as the
+agent received it. If the harness reads sizes from anywhere else, it is
+measuring a quantity nobody is billed for.
+
+The same rule catches the cheaper version of this mistake: a runner that adds a
+banner, a wrapper that pretty-prints JSON, a shell that interleaves stderr. Each
+is invisible at the return statement and present in the context window.
