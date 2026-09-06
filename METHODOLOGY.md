@@ -366,3 +366,37 @@ indeterminate rather than floor.
 
 If you fork this or write your own, re-earn them the same way. The tests are the
 part that transfers.
+
+## 12. Check that the fixture can exercise the change
+
+An A/B tests a change only if the fixture contains an input that reaches the
+code path you changed. That sounds too obvious to state, and it is exactly the
+kind of thing that gets skipped once the change itself is verified.
+
+A worked example. Output messages were being truncated to 200 characters in a
+parser, which made the tool's `detailed` mode identical to its `default` mode.
+The fix moved truncation into the formatter so `detailed` could return more. It
+was verified in isolation on a synthetic 3,467-character input: 200 characters
+before, 3,000 after. Correct fix, correctly built, correctly deployed into both
+fixtures.
+
+The A/B then came back null on both scenarios. The reason was not that the fix
+did not work. It was that the two fixtures produced exactly one failure each,
+of 193 and 76 characters — both under the old 200-character cap. Nothing had
+ever been truncated in either arm, so both arms ran identical code paths. The
+largest payload moved from 2,011 to 2,046 bytes, and those 35 bytes were table
+padding.
+
+The measurement was not a weak result. It was not a result at all, and reading
+it as "the fix does not help" would have been the expensive mistake, because the
+deltas were noise with confidence intervals spanning zero in both directions.
+
+So before spending on an A/B, assert the precondition the way you would assert
+ground truth: measure the fixture input against the threshold the change moves,
+and record that number next to the result. If the fixture cannot exercise the
+change, the run has no information in it, and no amount of N will add any.
+
+The related trap is the one directly above it in the stack: a fix that throws
+can be swallowed by a catch-all fallback and still look like a plausible
+success. Verify which code path produced the output, not just that the output
+changed size.
