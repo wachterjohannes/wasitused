@@ -426,3 +426,29 @@ measuring a quantity nobody is billed for.
 The same rule catches the cheaper version of this mistake: a runner that adds a
 banner, a wrapper that pretty-prints JSON, a shell that interleaves stderr. Each
 is invisible at the return statement and present in the context window.
+
+## 14. A cost metric alone cannot tell improvement from abandonment
+
+Two changes to the same tool produced almost the same cost overhead against
+their own baselines: +24.2% and +22.6%, against +50.9% for the unchanged tool.
+On cost alone they were the same result.
+
+They were opposites. The +22.6% arm kept adoption at 19/20 and raised calls per
+run. The +24.2% arm dropped adoption to 14/20, cut calls per run by a third, and
+more than doubled the number of times the agent bypassed the tool to run the
+underlying CLI itself. Its cost fell because agents stopped calling it, and the
+raw command was cheaper than a tool whose output they had to work around.
+
+That is the failure mode a cost metric is blind to by construction. Anything
+that makes a tool less attractive reduces its measured overhead, and a tool
+nobody invokes has an overhead of zero. Optimising cost without watching
+adoption optimises toward deletion.
+
+So report cost and adoption together, always, and treat a cost improvement that
+arrives with an adoption drop as a regression until shown otherwise. The
+supporting signals are worth capturing too: invocations per run, and how often
+the agent reached past the tool for the thing the tool wraps. Those made the
+difference here legible when the headline numbers did not.
+
+The general form: an intervention can improve a ratio by shrinking its
+denominator. Record the denominator.
