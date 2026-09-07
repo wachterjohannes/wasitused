@@ -81,6 +81,16 @@ export interface TranscriptAnalysis {
   reportedCostUsd: number | null;
   resultSubtype: string | null;
   resultIsError: boolean | null;
+  /**
+   * Shell calls the agent made, and how many came back with nothing at all.
+   *
+   * A machine that cannot fork returns empty output for every command, so an
+   * agent stops being able to do anything while still burning tokens retrying.
+   * That is an unusable run, not a failed one, and the distinction is invisible
+   * from the outcome alone.
+   */
+  shellCalls: number;
+  shellSilentFailures: number;
   events: ToolEvent[];
   invocationCount: number;
   /**
@@ -235,6 +245,42 @@ function readUsage(usage: Record<string, unknown> | undefined): TokenTotals | nu
   return totals;
 }
 
+
+
+/**
+ * A shell result carrying no output whatsoever — only an exit status, or the
+ * harness's own "nothing came back" marker.
+ *
+ * Occasionally legitimate: `test -f`, a `grep` with no match, a command run
+ * purely for its status. What is not legitimate is most of a run looking like
+ * this, which is what a host that cannot fork produces.
+ */
+export function isSilentShellResult(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed === "") return true;
+  if (trimmed === "(Bash completed with no output)") return true;
+
+  return /^Exit code \d+$/.test(trimmed);
+}
+
+/**
+ * A tool_result's content is either a string or a list of blocks. Both shapes
+ * appear in real transcripts.
+ */
+function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+
+  let text = "";
+  for (const block of content) {
+    if (typeof block === "object" && block !== null) {
+      const value = (block as Record<string, unknown>).text;
+      if (typeof value === "string") text += value;
+    }
+  }
+  return text;
+}
+
 export function analyzeTranscriptText(
   text: string,
   tool: ToolUnderTest,
@@ -259,6 +305,8 @@ export function analyzeTranscriptText(
   const events: ToolEvent[] = [];
   /** tool_use_id -> did the result come back an error. */
   const resultErrors = new Map<string, boolean>();
+  const shellCallIds = new Set<string>();
+  let shellSilentFailures = 0;
 
   for (let i = 0; i < meaningful.length; i++) {
     const line = meaningful[i] as string;
@@ -312,6 +360,8 @@ export function analyzeTranscriptText(
             typeof block.input === "object" && block.input !== null
               ? (block.input as Record<string, unknown>)
               : {};
+          if (toolName === "Bash") shellCallIds.add(blockId);
+
           const hit = classifyToolUse(toolName, input, tool);
           if (hit) {
             events.push({
@@ -341,6 +391,9 @@ export function analyzeTranscriptText(
           if (typeof id !== "string") continue;
           // An absent is_error means success; the field is only set on failure.
           resultErrors.set(id, block.is_error === true);
+          if (shellCallIds.has(id) && isSilentShellResult(toolResultText(block.content))) {
+            shellSilentFailures++;
+          }
         }
       }
     }
@@ -405,6 +458,8 @@ export function analyzeTranscriptText(
     reportedCostUsd,
     resultSubtype,
     resultIsError,
+    shellCalls: shellCallIds.size,
+    shellSilentFailures,
     events,
     invocationCount,
     invocationFailures,
@@ -429,6 +484,8 @@ export function analyzeTranscriptFile(
       exists: false,
       parseable: false,
       complete: false,
+      shellCalls: 0,
+      shellSilentFailures: 0,
       parseErrors: [`could not read transcript: ${(err as Error).message}`],
       totalLines: 0,
       parsedLines: 0,

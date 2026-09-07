@@ -568,3 +568,38 @@ What this does not license is dropping the baseline from a question about
 whether a tool is worth having. Overhead against no tool is the only number that
 answers that, and two variants can both be worse than nothing while differing
 from each other.
+
+## 19. A broken machine looks exactly like a hard task
+
+The dud guard catches a run that produced nothing. It does not catch the run
+that produced a great deal of nothing.
+
+When the host stops being able to fork — a full tmpfs, exhausted memory — the
+agent's shell returns an exit status and no output, for every command. The agent
+does not stop. It retries, reasons about the failure, tries a different
+approach, and burns tokens the whole way. The run ends with a large token count,
+a high turn count, and a failed check. From the outside that is indistinguishable
+from a scenario the agent could not solve.
+
+Measured here: fourteen runs, of which the first three solved cleanly and the
+next eleven all failed. The obvious reading was that the fixture was too hard,
+and it was wrong. The eleven had between 11 and 51 of their shell calls come back
+with nothing but `Exit code 1`. The cutover was a single point in time, not a
+property of any run. One of the failing agents said so itself: "even trivial
+commands like `echo hi` and `pwd` fail with exit code 1 and no output... it looks
+like an infrastructure issue on this session/sandbox."
+
+So the harness now counts shell calls and output-free results, and excludes a run
+whose shell mostly returned nothing — `broken-environment`, alongside
+`dud-zero-cost`. Excluded, not failed: the distinction is the whole point, since
+counting these as task failures put the blame on the fixture. Applied to that
+battery it separates the eleven from the three exactly, and the three that remain
+all solved.
+
+The threshold is deliberately unfussy — a majority of at least five calls.
+Occasional empty output is ordinary; `grep` finds nothing, `test` returns a
+status. Most of a run looking like that is not something a working machine does.
+
+The prevention is duller than the detection: check free space on the temp
+filesystem before a battery and after it, because the thing that filled it was
+the previous battery's caches.

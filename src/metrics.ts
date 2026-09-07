@@ -35,7 +35,11 @@ import { analyzeTranscriptFile } from "./transcript";
 import type { BatchRecord, CheckRecord, Condition, RunRecord } from "./types";
 import { CONDITIONS } from "./types";
 
-export type Exclusion = "dud-zero-cost" | "unparseable-transcript" | "missing-run-record";
+export type Exclusion =
+  | "dud-zero-cost"
+  | "unparseable-transcript"
+  | "missing-run-record"
+  | "broken-environment";
 
 export interface RunMetrics {
   runId: string;
@@ -212,6 +216,28 @@ function passRateOf(runs: RunMetrics[]): Rate {
 }
 
 /** Reads one run directory back into a metrics row. */
+
+/**
+ * Enough of the agent's shell calls came back completely empty that the run
+ * measured the host rather than the tool.
+ *
+ * The bar is deliberately high. A few empty results are ordinary — `grep` with
+ * no match, a `test` that fails. A majority of them across a non-trivial number
+ * of calls is not something a working machine does.
+ */
+export function isBrokenEnvironment(analysis: {
+  shellCalls: number;
+  shellSilentFailures: number;
+}): boolean {
+  const MIN_CALLS = 5;
+  const FAILURE_SHARE = 0.5;
+
+  return (
+    analysis.shellCalls >= MIN_CALLS &&
+    analysis.shellSilentFailures > analysis.shellCalls * FAILURE_SHARE
+  );
+}
+
 export function metricsForRun(
   batchDir: string,
   runDir: string,
