@@ -483,3 +483,34 @@ credential and just as capable of invalidating the run.
 The general form of the mistake is the one in §12 wearing different clothes.
 There the fixture could not reach the changed code; here it could not reach the
 changed prose. Both produce a measurement of something other than the change.
+
+## 16. An interval that barely contains zero is not a result
+
+A confidence interval spanning zero says the measurement could not separate the
+effect from nothing. That is a statement about the measurement, not about the
+effect, and the two get conflated the moment the interval is used to make a
+claim.
+
+One battery put a tool at +8.8% against its no-tool baseline with a 95% interval
+of [-8,646, +59,704]. The interval contained zero, so the result was reported as
+parity: the tool no longer costs more than not using it. A second battery on a
+configuration the first could not be distinguished from doubled the sample.
+Pooled, the same quantity came out at +11.0% with an interval of [+7,251,
++55,681]. Zero was outside it. The tool had been measurably more expensive the
+whole time; twenty runs a side could not see it.
+
+Nothing was wrong with the arithmetic. What was wrong was reading "we could not
+detect a difference" as "there is no difference", when the interval's lower
+bound sat a few hundred tokens from zero out of a three-hundred-thousand-token
+run. An interval that clears zero by a wide margin supports a claim. One that
+clears it barely is a request for more data.
+
+So when an interval contains zero, report the width, not the conclusion, and say
+what sample would settle it. When it excludes zero by a hair, say that too. And
+if two arms cannot be distinguished, that is licence to pool them and re-estimate
+rather than to treat the more convenient of the two as the answer.
+
+The corollary is about publishing. That parity claim had already gone into a
+pull request description before the second battery ran. Correcting it afterwards
+cost nothing except the correction; leaving it would have handed reviewers a
+number the evidence no longer supported.
