@@ -19,6 +19,7 @@ import { buildAgentArgv, DudGuardError, HARNESS_VERSION, runBatch, runOrder } fr
 import { loadScenario, ScenarioValidationError } from "./scenario";
 import { renderSuiteReport } from "./suite-report";
 import { collectScenarioPaths, computeSuiteSummary, runSuite, type Budget } from "./suite";
+import { CONDITIONS, type Condition } from "./types";
 
 const USAGE = `wasitused ${HARNESS_VERSION} — measure whether a coding agent actually uses your tool.
 
@@ -47,6 +48,11 @@ Options for "run":
       --agent-command <c>  agent executable (default "claude")
       --keep-temp          keep the per-run temp dirs for debugging
       --dry-run            print the exact isolation + spawn plan, run nothing
+      --conditions <list>  comma-separated subset of with_tool,baseline. Comparing two
+                           tool VARIANTS needs neither arm to re-measure the same
+                           no-tool baseline; dropping it halves the spend. The
+                           metrics that need both conditions report as unavailable
+                           rather than guessing.
 
 Options for "pilot":
   Same as "run", plus:
@@ -87,6 +93,29 @@ function credentialFrom(values: Record<string, unknown>): CredentialSource {
   });
 }
 
+/**
+ * Parses --conditions. Comparing two tool variants against each other does not
+ * need either run to re-measure the same no-tool baseline, and that arm is half
+ * the spend. An unknown or empty name is rejected rather than silently ignored:
+ * a typo that quietly ran the wrong arm would be indistinguishable from a
+ * result.
+ */
+export function parseConditions(raw: string | undefined): Condition[] | undefined {
+  if (raw === undefined) return undefined;
+
+  const names = raw.split(",").map((s) => s.trim()).filter((s) => s !== "");
+  if (names.length === 0) throw new Error("--conditions was given but named nothing");
+
+  for (const name of names) {
+    if (!(CONDITIONS as readonly string[]).includes(name)) {
+      throw new Error(`--conditions: unknown condition "${name}" (expected ${CONDITIONS.join(" or ")})`);
+    }
+  }
+
+  const unique = [...new Set(names)] as Condition[];
+  return unique;
+}
+
 function fail(message: string): never {
   process.stderr.write(message.endsWith("\n") ? message : message + "\n");
   process.exit(1);
@@ -104,6 +133,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       "agent-command": { type: "string" },
       "keep-temp": { type: "boolean" },
       "dry-run": { type: "boolean" },
+      conditions: { type: "string" },
     },
   });
   const scenarioPath = positionals[0];
@@ -116,6 +146,12 @@ async function cmdRun(argv: string[]): Promise<void> {
   const outDir = path.resolve(values.out ?? "runs");
   const credential = credentialFrom(values);
   const model = values.model ?? scenario.agent.model;
+  let conditions: Condition[] | undefined;
+  try {
+    conditions = parseConditions(values.conditions);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
 
   if (values["dry-run"]) {
     const { stripped } = stripInheritedAgentEnv();
@@ -126,7 +162,8 @@ async function cmdRun(argv: string[]): Promise<void> {
       model,
       n,
       totalRuns: n * 2,
-      order: runOrder(n).map((s) => `${s.condition}-${s.index}`),
+      conditions: conditions ?? CONDITIONS,
+      order: runOrder(n, conditions).map((s) => `${s.condition}-${s.index}`),
       outDir,
       isolation: {
         configDir: "<temp>/config  (fresh CLAUDE_CONFIG_DIR per run, never ~/.claude)",
@@ -171,6 +208,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       model,
       ...(values["keep-temp"] ? { keepTemp: true } : {}),
       ...(values["agent-command"] ? { agentCommand: values["agent-command"] } : {}),
+      ...(conditions ? { conditions } : {}),
       log: (m) => process.stderr.write(`  ${m}\n`),
     });
     batchDir = result.batchDir;

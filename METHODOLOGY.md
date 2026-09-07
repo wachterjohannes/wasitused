@@ -543,3 +543,28 @@ failure mode went from a third of responses to none of them — and the
 recommendation followed from that regardless of where the token interval landed.
 When the expensive question turns out not to be load-bearing, say so and stop,
 rather than buying significance for a claim nothing rests on.
+
+## 18. Comparing two variants of a tool does not need the no-tool arm
+
+The default shape of a run here is two conditions, with the tool and without,
+because the question is usually what the tool costs against not having it. That
+arm is half the spend, and it is often measuring something already known.
+
+When the comparison is between two *variants* of the same tool — a formatter
+change, a different response shape — neither arm needs to re-measure the same
+no-tool baseline. The variants are compared against each other. Running the
+baseline twice buys a drift control, which is worth having when the arms were
+collected far apart or on different fixtures, and worth skipping when they were
+not.
+
+`--conditions` makes that explicit rather than implicit. The cost of getting it
+wrong is asymmetric, so it refuses an unknown name instead of falling back to
+the default pair: a typo that quietly ran the baseline when the tool arm was
+meant would produce a number indistinguishable from a result. The dry-run plan
+prints the conditions it will actually run, for the same reason — a plan that
+lists an arm it will not execute is worse than no plan.
+
+What this does not license is dropping the baseline from a question about
+whether a tool is worth having. Overhead against no tool is the only number that
+answers that, and two variants can both be worse than nothing while differing
+from each other.
