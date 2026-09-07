@@ -514,3 +514,32 @@ The corollary is about publishing. That parity claim had already gone into a
 pull request description before the second battery ran. Correcting it afterwards
 cost nothing except the correction; leaving it would have handed reviewers a
 number the evidence no longer supported.
+
+## 17. Deciding to collect more data is part of the analysis
+
+When an interval nearly excludes zero, the obvious move is to add runs until it
+does. That move is the problem. If the decision to keep collecting depends on
+what the data has shown so far, the stopping rule is a function of the result,
+and the error rate the interval advertises is no longer the error rate you have.
+Enough repetitions of "just a few more runs" will cross almost any threshold
+eventually.
+
+A worked case. An effect came in at -11.3% with an interval of [-97,750,
++3,935], and a power calculation said six more runs a side would settle it. Six
+more runs a side arrived: the interval narrowed to [-83,187, +2,443], the point
+estimate drifted to -10.1%, and it still contained zero. The same calculation
+now said four more runs a side. It would have said something similar the time
+after that, because the effect estimate moves as data accumulates and the target
+moves with it.
+
+The defensible options are both available before looking: pre-commit to a final
+sample and report whatever it gives, or stop at the planned sample and report
+the interval as it stands. What is not defensible is letting the result choose
+the sample size and then quoting the interval as though it had not.
+
+The way out is usually to notice that the decision does not depend on the
+contested number. In that case the mechanism was settled at p = 1.5e-06 — a
+failure mode went from a third of responses to none of them — and the
+recommendation followed from that regardless of where the token interval landed.
+When the expensive question turns out not to be load-bearing, say so and stop,
+rather than buying significance for a claim nothing rests on.
