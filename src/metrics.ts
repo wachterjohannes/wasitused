@@ -57,6 +57,9 @@ export interface RunMetrics {
   invocationStatusUnknown: number;
   /** Invocations with a knowable outcome — the failure-rate denominator. */
   invocationDeterminate: number;
+  /** Shell calls the agent made, and how many came back with no output at all. */
+  shellCalls: number;
+  shellSilentFailures: number;
   documentationCount: number;
   /** Read the tool's docs but never called it — the distinction adoption depends on. */
   documentationOnly: boolean;
@@ -260,6 +263,8 @@ export function metricsForRun(
       invocationFailures: 0,
       invocationStatusUnknown: 0,
       invocationDeterminate: 0,
+      shellCalls: 0,
+      shellSilentFailures: 0,
       documentationCount: 0,
       documentationOnly: false,
       solved: null,
@@ -322,6 +327,8 @@ export function metricsForRun(
     invocationFailures: analysis.invocationFailures,
     invocationStatusUnknown: analysis.invocationStatusUnknown,
     invocationDeterminate: analysis.invocationDeterminate,
+    shellCalls: analysis.shellCalls,
+    shellSilentFailures: analysis.shellSilentFailures,
     documentationCount: analysis.documentationCount,
     documentationOnly: analysis.readDocs && !analysis.invoked,
     solved,
