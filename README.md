@@ -265,6 +265,38 @@ token that dies mid-batch.
 If three consecutive runs produce zero billable tokens, the batch **aborts
 loudly** rather than letting dud rows be counted as failures.
 
+## Other agents: opencode
+
+`--agent opencode` runs the same scenarios under [opencode](https://opencode.ai)
+instead of Claude Code:
+
+```bash
+export OLLAMA_API_KEY=...            # whatever your provider needs
+wasitused run scenario.json --agent opencode --model <provider>/<model> \
+  --provider-env OLLAMA_API_KEY
+```
+
+The isolation guarantees are the same, with two differences that were measured
+rather than assumed:
+
+- opencode reads skills from `$HOME` as well as from the project, so each run gets
+  its own `HOME` and its own four XDG directories, not just an empty config dir.
+- `opencode run` streams events for the top-level session only; a subagent's
+  tokens never reach stdout. The transcript is therefore exported from opencode's
+  own session store after the run, subagents included, and normalized into the
+  event shape the Claude Code parser reads. The raw stream and the raw export are
+  kept beside it in the run directory.
+
+A per-run config caps the turns (`agent.build.steps` = `maxTurns`), pins the model
+(including the small model used for titles), and switches off auto-update,
+sharing, LSP downloads, formatters and snapshots in both conditions. A batch
+refuses to start while a `--provider-env` variable is missing.
+
+Token counts come from opencode's own accounting and costs from its own price
+table. They are consistent within opencode; whether they are comparable to
+Claude Code's figures depends on the provider, so compare agents on adoption and
+pass rates, and on cost only within one agent.
+
 ## Prior art
 
 There is real work in this space, and it mostly answers a different question.
@@ -298,13 +330,15 @@ at anyone.
 
 ## Non-goals
 
-No scenario DSL. No plugin architecture. No multi-agent adapter layer. No web
-UI. No SaaS. Claude Code is the only supported agent until the loop is proven.
+No scenario DSL. No plugin architecture. No generic multi-agent adapter layer:
+each supported agent (Claude Code, opencode) is handled explicitly, with its own
+isolation measured and its own failure-mode tests. No web UI. No SaaS.
 
 ## Requirements
 
 Node ≥ 20, and the [Claude Code](https://claude.com/claude-code) CLI on your
-`PATH`, authenticated.
+`PATH`, authenticated — or `opencode` on your `PATH` with a provider credential
+in the environment.
 
 ## Development
 

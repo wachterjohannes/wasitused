@@ -15,11 +15,19 @@ import { formatRate, formatSummary, formatUsd, formatTokens } from "./format";
 import { computeBatchMetrics } from "./metrics";
 import { PILOT_EXIT, runPilot, type PilotResult } from "./pilot";
 import { renderReport } from "./report";
-import { buildAgentArgv, DudGuardError, HARNESS_VERSION, runBatch, runOrder } from "./runner";
+import { buildOpencodeArgv } from "./opencode";
+import {
+  buildAgentArgv,
+  DudGuardError,
+  HARNESS_VERSION,
+  resolveAgentKind,
+  runBatch,
+  runOrder,
+} from "./runner";
 import { loadScenario, ScenarioValidationError } from "./scenario";
 import { renderSuiteReport } from "./suite-report";
 import { collectScenarioPaths, computeSuiteSummary, runSuite, type Budget } from "./suite";
-import { CONDITIONS, type Condition } from "./types";
+import { AGENT_KINDS, CONDITIONS, type AgentKind, type Condition } from "./types";
 
 const USAGE = `wasitused ${HARNESS_VERSION} — measure whether a coding agent actually uses your tool.
 
@@ -45,7 +53,10 @@ Options for "run":
                            CLAUDE_CODE_OAUTH_TOKEN when it is set). A token is never
                            accepted as a bare argument — argv is visible to every
                            other process on the machine.
-      --agent-command <c>  agent executable (default "claude")
+      --agent <kind>       claude-code (default) or opencode; overrides agent.kind
+      --provider-env <v,..> opencode: env vars holding the provider credential;
+                           a batch refuses to start while any is missing
+      --agent-command <c>  agent executable (default "claude", or "opencode")
       --keep-temp          keep the per-run temp dirs for debugging
       --dry-run            print the exact isolation + spawn plan, run nothing
       --conditions <list>  comma-separated subset of with_tool,baseline. Comparing two
@@ -80,6 +91,8 @@ Every metric is recomputed from the stored transcripts, so "report", "suite-repo
 and "metrics" never spend a run.`;
 
 const CREDENTIAL_OPTIONS = {
+  agent: { type: "string" },
+  "provider-env": { type: "string" },
   credentials: { type: "string" },
   "oauth-token-env": { type: "string" },
   "oauth-token-file": { type: "string" },
@@ -91,6 +104,31 @@ function credentialFrom(values: Record<string, unknown>): CredentialSource {
     oauthTokenEnv: values["oauth-token-env"] as string | undefined,
     oauthTokenFile: values["oauth-token-file"] as string | undefined,
   });
+}
+
+/**
+ * --agent picks the coding agent (overriding the scenario's agent.kind), and
+ * --provider-env names the env vars holding an opencode provider credential,
+ * comma-separated. An unknown agent is rejected, never defaulted: a typo that
+ * quietly ran the other agent would produce a plausible, wrong result.
+ */
+export function agentOptionsFrom(values: Record<string, unknown>): {
+  agentKind?: AgentKind;
+  providerEnv?: string[];
+} {
+  const out: { agentKind?: AgentKind; providerEnv?: string[] } = {};
+  const agent = values.agent as string | undefined;
+  if (agent !== undefined) {
+    if (!(AGENT_KINDS as string[]).includes(agent)) {
+      throw new Error(`--agent: unknown agent "${agent}" (expected ${AGENT_KINDS.join(" or ")})`);
+    }
+    out.agentKind = agent as AgentKind;
+  }
+  const providerEnv = values["provider-env"] as string | undefined;
+  if (providerEnv !== undefined) {
+    out.providerEnv = providerEnv.split(",").map((x) => x.trim()).filter((x) => x !== "");
+  }
+  return out;
 }
 
 /**
@@ -114,6 +152,14 @@ export function parseConditions(raw: string | undefined): Condition[] | undefine
 
   const unique = [...new Set(names)] as Condition[];
   return unique;
+}
+
+function agentOptionsOrFail(values: Record<string, unknown>): ReturnType<typeof agentOptionsFrom> {
+  try {
+    return agentOptionsFrom(values);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
 }
 
 function fail(message: string): never {
@@ -147,11 +193,14 @@ async function cmdRun(argv: string[]): Promise<void> {
   const credential = credentialFrom(values);
   const model = values.model ?? scenario.agent.model;
   let conditions: Condition[] | undefined;
+  let agentOpts: ReturnType<typeof agentOptionsFrom> = {};
   try {
     conditions = parseConditions(values.conditions);
+    agentOpts = agentOptionsFrom(values);
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
   }
+  const agentKind = resolveAgentKind(scenario, agentOpts);
 
   if (values["dry-run"]) {
     const { stripped } = stripInheritedAgentEnv();
@@ -178,14 +227,21 @@ async function cmdRun(argv: string[]): Promise<void> {
           note: info.note ?? null,
         },
       },
-      argvWithTool: buildAgentArgv(
-        scenario,
-        model,
-        true,
-        scenario.tool.enable.mcpServers ? "<temp>/mcp.json" : null,
-        values["agent-command"] ?? "claude"
-      ),
-      argvBaseline: buildAgentArgv(scenario, model, false, null, values["agent-command"] ?? "claude"),
+      agent: agentKind,
+      argvWithTool:
+        agentKind === "opencode"
+          ? buildOpencodeArgv(scenario, model, values["agent-command"] ?? "opencode")
+          : buildAgentArgv(
+              scenario,
+              model,
+              true,
+              scenario.tool.enable.mcpServers ? "<temp>/mcp.json" : null,
+              values["agent-command"] ?? "claude"
+            ),
+      argvBaseline:
+        agentKind === "opencode"
+          ? buildOpencodeArgv(scenario, model, values["agent-command"] ?? "opencode")
+          : buildAgentArgv(scenario, model, false, null, values["agent-command"] ?? "claude"),
       toolEnabledBy: scenario.tool.enable,
       invocationMatchers: scenario.tool.invocation,
       documentationMatchers: scenario.tool.documentation ?? null,
@@ -208,6 +264,7 @@ async function cmdRun(argv: string[]): Promise<void> {
       model,
       ...(values["keep-temp"] ? { keepTemp: true } : {}),
       ...(values["agent-command"] ? { agentCommand: values["agent-command"] } : {}),
+      ...agentOpts,
       ...(conditions ? { conditions } : {}),
       log: (m) => process.stderr.write(`  ${m}\n`),
     });
@@ -296,6 +353,7 @@ async function cmdPilot(argv: string[]): Promise<void> {
       ...(values.model ? { model: values.model } : {}),
       ...(values["keep-temp"] ? { keepTemp: true } : {}),
       ...(values["agent-command"] ? { agentCommand: values["agent-command"] } : {}),
+      ...agentOptionsOrFail(values),
       log: (m) => process.stderr.write(`  ${m}\n`),
     });
   } catch (err) {
@@ -370,6 +428,7 @@ async function cmdSuite(argv: string[]): Promise<void> {
     ...(values.model ? { model: values.model } : {}),
     ...(values["keep-temp"] ? { keepTemp: true } : {}),
     ...(values["agent-command"] ? { agentCommand: values["agent-command"] } : {}),
+    ...agentOptionsOrFail(values),
     log: (m) => process.stderr.write(`  ${m}\n`),
   });
 

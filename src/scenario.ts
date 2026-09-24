@@ -8,7 +8,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ResolvedScenario, ScenarioConfig } from "./types";
+import { AGENT_KINDS, type AgentKind, type ResolvedScenario, type ScenarioConfig } from "./types";
 
 export class ScenarioValidationError extends Error {
   constructor(
@@ -35,7 +35,7 @@ const SCENARIO_KEYS = [
   "tool",
 ];
 const CHECK_KEYS = ["command", "timeoutMs"];
-const AGENT_KEYS = ["model", "maxTurns", "timeoutMs"];
+const AGENT_KEYS = ["kind", "model", "maxTurns", "timeoutMs"];
 const TOOL_KEYS = ["name", "enable", "invocation", "documentation"];
 const ENABLE_KEYS = [
   "skills",
@@ -146,7 +146,7 @@ export function validateScenario(
   }
 
   // agent
-  let agent = {
+  let agent: ScenarioConfig["agent"] = {
     model: DEFAULT_MODEL,
     maxTurns: DEFAULT_MAX_TURNS,
     timeoutMs: DEFAULT_AGENT_TIMEOUT_MS,
@@ -165,7 +165,14 @@ export function validateScenario(
       if (raw.agent.timeoutMs !== undefined && typeof raw.agent.timeoutMs !== "number") {
         problems.push("agent.timeoutMs: must be a number");
       }
+      if (
+        raw.agent.kind !== undefined &&
+        !AGENT_KINDS.includes(raw.agent.kind as AgentKind)
+      ) {
+        problems.push(`agent.kind: must be one of ${AGENT_KINDS.join(", ")}`);
+      }
       agent = {
+        ...(raw.agent.kind !== undefined ? { kind: raw.agent.kind as AgentKind } : {}),
         model: String(raw.agent.model ?? DEFAULT_MODEL),
         maxTurns: Number(raw.agent.maxTurns ?? DEFAULT_MAX_TURNS),
         timeoutMs: Number(raw.agent.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS),

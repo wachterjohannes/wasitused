@@ -659,3 +659,32 @@ the link first (copy over the link, then edit), or copy the tree. The guard is
 just as mechanical: have a build fail if a base file's contents changed while it
 ran, and record a checksum manifest of each fixture when its battery runs so a
 later re-run can prove it is re-running the same thing.
+
+## 22. A working directory is two things, and a sandbox needs both
+
+Every run copies the fixture into a temp directory and spawns the agent there,
+so the agent cannot touch the harness's own tree. Setting the child process's
+working directory does that — for an agent that asks the operating system where
+it is.
+
+The second agent this harness learned to drive does not. It takes its project
+directory from the `PWD` environment variable, which a spawned process inherits
+from its parent unchanged, whatever its real working directory is. On the first
+real run it resolved its project to the harness repository, globbed it, read the
+scenario's frozen expectation and a stored artifact from an old batch, and wrote
+its answer into the original fixture. The check then ran in the untouched temp
+copy and reported a failure, and the baseline run did the same. Nothing in the
+tokens, the turn count or the exit code said anything had gone wrong.
+
+Two changes, one per layer. The child's `PWD` is now set to the same directory
+as its working directory, for every agent. That closes the hole that was found.
+The one after it is not known yet, so the harness also fingerprints the
+scenario's own directory — every file's path, size and modification time —
+before a batch and after every run, and aborts the batch the moment it changes.
+The fingerprint does not care how the agent got out, only that the tree it must
+not touch was touched. An escape that goes nowhere near the fixture is not
+caught by it; one that reaches the grader or the answer is.
+
+The general form: isolation is a claim about where the agent *could* go, and the
+agent decides that from more than one input. Check the outcome — did anything
+outside the sandbox change? — not only the mechanism you configured.

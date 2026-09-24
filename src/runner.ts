@@ -17,12 +17,24 @@ import {
   OAUTH_TOKEN_ENV,
   type CredentialSource,
 } from "./isolation";
+import {
+  buildOpencodeArgv,
+  buildOpencodeConfig,
+  exportOpencodeSessions,
+  normalizeOpencodeExport,
+  opencodeDirs,
+  opencodeEnv,
+  stripOpencodeEnv,
+  writeOpencodeConfig,
+} from "./opencode";
 import { bestEffortUsd } from "./pricing";
 import { analyzeTranscriptFile } from "./transcript";
 import type {
+  AgentKind,
   BatchRecord,
   CheckRecord,
   Condition,
+  CredentialInfo,
   ResolvedScenario,
   RunRecord,
 } from "./types";
@@ -98,6 +110,58 @@ export const spawnClaudeAgent: SpawnAgentFn = (req) =>
     });
   });
 
+export class IsolationBreachError extends Error {
+  constructor(
+    message: string,
+    public readonly runId: string,
+    public readonly changed: string[]
+  ) {
+    super(message);
+    this.name = "IsolationBreachError";
+  }
+}
+
+/**
+ * A cheap fingerprint of the scenario's own directory: every file's relative
+ * path, size and mtime. The agent works on a copy; if the original changes
+ * while a run is in flight, the agent reached outside its sandbox — into the
+ * fixture it is not supposed to be able to see, or next to the check and the
+ * frozen expectation that grade it.
+ */
+export function snapshotTree(root: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const walk = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(full);
+      } else {
+        try {
+          const st = fs.lstatSync(full);
+          out.set(path.relative(root, full), `${st.size}:${st.mtimeMs}`);
+        } catch {
+          /* vanished between readdir and stat: the diff will show it */
+        }
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
+export function diffTrees(before: Map<string, string>, after: Map<string, string>): string[] {
+  const changed: string[] = [];
+  for (const [k, v] of after) if (before.get(k) !== v) changed.push(before.has(k) ? `modified ${k}` : `added ${k}`);
+  for (const k of before.keys()) if (!after.has(k)) changed.push(`removed ${k}`);
+  return changed.sort();
+}
+
 /** What one finished run cost, handed to the budget hook. */
 export interface RunProgress {
   runId: string;
@@ -132,6 +196,16 @@ export interface RunBatchOptions {
   keepTemp?: boolean;
   spawnAgent?: SpawnAgentFn;
   agentCommand?: string;
+  /** Overrides the scenario's agent.kind. */
+  agentKind?: AgentKind;
+  /**
+   * opencode only: env vars that carry the model provider's credential. Their
+   * presence (never their value) is recorded per run, and a run refuses to
+   * start without them rather than producing a column of zero-cost failures.
+   */
+  providerEnv?: string[];
+  /** opencode only: exports the session store after a run (tests inject a fake). */
+  exportSessions?: typeof exportOpencodeSessions;
   now?: () => Date;
   log?: (message: string) => void;
   /** Overrides the temp root used for isolated runs (tests only). */
@@ -249,6 +323,39 @@ function pad(n: number): string {
   return String(n).padStart(3, "0");
 }
 
+export function resolveAgentKind(scenario: ResolvedScenario, opts: { agentKind?: AgentKind }): AgentKind {
+  return opts.agentKind ?? scenario.agent.kind ?? "claude-code";
+}
+
+/**
+ * opencode takes provider credentials from the environment. There is no
+ * lifetime to read, so it is recorded as unknown — never as healthy — and the
+ * dud guard remains the defence against a key that stops working mid-batch.
+ */
+export function inspectProviderEnv(
+  names: string[],
+  env: NodeJS.ProcessEnv = process.env
+): CredentialInfo {
+  const present = names.filter((n) => typeof env[n] === "string" && env[n] !== "");
+  const missing = names.filter((n) => !present.includes(n));
+  return {
+    source: names.length === 0 ? "none" : "provider-env",
+    ...(names.length > 0 ? { origin: names.map((n) => `$${n}`).join(", ") } : {}),
+    copied: false,
+    lifetimeKnown: false,
+    expiresAt: null,
+    remainingMs: null,
+    remainingHuman: null,
+    expired: false,
+    note:
+      names.length === 0
+        ? "No provider credential variable named; opencode will use whatever its config and environment provide."
+        : `Provider credential from the environment (present: ${present.join(", ") || "none"}${
+            missing.length ? `; MISSING: ${missing.join(", ")}` : ""
+          }). No readable expiry; the dud guard is the defence.`,
+  };
+}
+
 /** Runs one condition/index pair end to end and persists everything it produced. */
 export async function runOnce(
   scenario: ResolvedScenario,
@@ -281,32 +388,77 @@ export async function runOnce(
     ...(opts.tmpRoot ? { tmpRoot: opts.tmpRoot } : {}),
   });
 
-  const credential = inspectCredentials(opts.credential);
-  credential.copied = fs.existsSync(
-    path.join(isolated.configDir, ".credentials.json")
-  );
+  const agentKind = resolveAgentKind(scenario, opts);
+  const { env: claudeStripped, stripped: strippedClaude } = stripInheritedAgentEnv();
+  let env: NodeJS.ProcessEnv;
+  let argv: string[];
+  let credential: CredentialInfo;
+  let stripped: string[];
+  let agentCommand: string;
+  let opencodeEnvForExport: NodeJS.ProcessEnv | null = null;
 
-  const { env: baseEnv, stripped } = stripInheritedAgentEnv();
-  const env: NodeJS.ProcessEnv = {
-    ...baseEnv,
-    CLAUDE_CONFIG_DIR: isolated.configDir,
-    // The only CLAUDE_* variable deliberately re-added after stripping. It is
-    // the credential, not configuration, and it never reaches disk or argv.
-    ...(opts.credential.kind === "oauth-token"
-      ? { [OAUTH_TOKEN_ENV]: opts.credential.token }
-      : {}),
-    ...(toolEnabled ? scenario.tool.enable.env ?? {} : {}),
-  };
-
-  const argv = buildAgentArgv(
-    scenario,
-    model,
-    toolEnabled,
-    isolated.mcpConfigPath,
-    opts.agentCommand
-  );
+  if (agentKind === "opencode") {
+    agentCommand = opts.agentCommand ?? "opencode";
+    credential = inspectProviderEnv(opts.providerEnv ?? []);
+    const dirs = opencodeDirs(isolated.tempDir);
+    const skillsDir = path.join(isolated.configDir, "skills");
+    const append = scenario.tool.enable.appendSystemPrompt;
+    const instructionFiles: string[] = [];
+    if (toolEnabled && append) {
+      const file = path.join(isolated.tempDir, "append-system-prompt.md");
+      fs.writeFileSync(file, append + "\n");
+      instructionFiles.push(file);
+    }
+    writeOpencodeConfig(
+      dirs,
+      buildOpencodeConfig({
+        model,
+        maxTurns: scenario.agent.maxTurns,
+        skillPaths: toolEnabled && fs.existsSync(skillsDir) ? [skillsDir] : [],
+        instructionFiles,
+        mcpServers:
+          toolEnabled && isolated.mcpConfigPath
+            ? ((JSON.parse(fs.readFileSync(isolated.mcpConfigPath, "utf8")) as {
+                mcpServers: Record<string, unknown>;
+              }).mcpServers ?? null)
+            : null,
+      })
+    );
+    const { env: noOpencode, stripped: strippedOpencode } = stripOpencodeEnv(claudeStripped);
+    stripped = [...strippedClaude, ...strippedOpencode].sort();
+    env = {
+      ...opencodeEnv(noOpencode, dirs),
+      ...(toolEnabled ? scenario.tool.enable.env ?? {} : {}),
+      // spawn() sets the child's cwd but not PWD, which it inherits from the
+      // harness. opencode takes its project directory from PWD: without this it
+      // ran in the harness's own repository, read the frozen expectation and
+      // wrote into the source fixture. Measured, not hypothetical.
+      PWD: isolated.workDir,
+    };
+    opencodeEnvForExport = env;
+    argv = buildOpencodeArgv(scenario, model, agentCommand);
+  } else {
+    agentCommand = opts.agentCommand ?? "claude";
+    credential = inspectCredentials(opts.credential);
+    credential.copied = fs.existsSync(path.join(isolated.configDir, ".credentials.json"));
+    stripped = strippedClaude;
+    env = {
+      ...claudeStripped,
+      CLAUDE_CONFIG_DIR: isolated.configDir,
+      // The only CLAUDE_* variable deliberately re-added after stripping. It is
+      // the credential, not configuration, and it never reaches disk or argv.
+      ...(opts.credential.kind === "oauth-token"
+        ? { [OAUTH_TOKEN_ENV]: opts.credential.token }
+        : {}),
+      ...(toolEnabled ? scenario.tool.enable.env ?? {} : {}),
+      PWD: isolated.workDir,
+    };
+    argv = buildAgentArgv(scenario, model, toolEnabled, isolated.mcpConfigPath, agentCommand);
+  }
 
   const transcriptFile = path.join(runDir, "transcript.jsonl");
+  const eventsFile = path.join(runDir, "opencode.events.jsonl");
+  const sessionsFile = path.join(runDir, "opencode.sessions.json");
   const stderrFile = path.join(runDir, "agent.stderr.log");
   const checkFile = path.join(runDir, "check.json");
   const artifactDir = path.join(runDir, "artifact");
@@ -320,7 +472,9 @@ export async function runOnce(
       argv,
       cwd: isolated.workDir,
       env,
-      transcriptFile,
+      // opencode's stdout is its event stream, which misses subagent sessions;
+      // the transcript proper is exported from its session store below.
+      transcriptFile: agentKind === "opencode" ? eventsFile : transcriptFile,
       stderrFile,
       timeoutMs: scenario.agent.timeoutMs,
     });
@@ -333,6 +487,15 @@ export async function runOnce(
   }
   const wallClockMs = Date.now() - startedMs;
   const endedAt = (opts.now?.() ?? new Date()).toISOString();
+
+  let transcriptExportError: string | null = null;
+  if (agentKind === "opencode" && opencodeEnvForExport) {
+    const exporter = opts.exportSessions ?? exportOpencodeSessions;
+    const exported = exporter(agentCommand, opencodeEnvForExport, isolated.workDir);
+    transcriptExportError = exported.error;
+    fs.writeFileSync(sessionsFile, JSON.stringify(exported, null, 2) + "\n");
+    fs.writeFileSync(transcriptFile, normalizeOpencodeExport(exported));
+  }
 
   const check = await runCheck(scenario, isolated.workDir);
   fs.writeFileSync(checkFile, JSON.stringify(check, null, 2) + "\n");
@@ -363,6 +526,7 @@ export async function runOnce(
     condition,
     index,
     model,
+    agentKind,
     maxTurns: scenario.agent.maxTurns,
     toolEnabled,
     startedAt,
@@ -375,6 +539,15 @@ export async function runOnce(
     argv,
     envKeysStripped: stripped,
     transcriptFile: path.relative(batchDir, transcriptFile),
+    ...(agentKind === "opencode"
+      ? {
+          rawTranscriptFiles: [
+            path.relative(batchDir, eventsFile),
+            path.relative(batchDir, sessionsFile),
+          ],
+          transcriptExportError,
+        }
+      : {}),
     stderrFile: path.relative(batchDir, stderrFile),
     checkFile: path.relative(batchDir, checkFile),
     artifactDir: artifactError ? null : path.relative(batchDir, artifactDir),
@@ -421,7 +594,21 @@ export async function runBatch(
   fs.mkdirSync(path.join(batchDir, "runs"), { recursive: true });
 
   const conditions = opts.conditions ?? CONDITIONS;
-  const credential = inspectCredentials(opts.credential);
+  const agentKind = resolveAgentKind(scenario, opts);
+  const credential =
+    agentKind === "opencode"
+      ? inspectProviderEnv(opts.providerEnv ?? [])
+      : inspectCredentials(opts.credential);
+  log(`agent: ${agentKind}`);
+  if (agentKind === "opencode") {
+    const missing = (opts.providerEnv ?? []).filter((n) => !process.env[n]);
+    if (missing.length > 0) {
+      throw new Error(
+        `opencode provider credential missing from the environment: ${missing.join(", ")}. ` +
+          `Refusing to start a batch that could only produce zero-cost runs.`
+      );
+    }
+  }
   log(
     `credential: source=${credential.source}${
       credential.origin ? ` (${credential.origin})` : ""
@@ -450,6 +637,7 @@ export async function runBatch(
       tool: scenario.tool,
     },
     model,
+    agentKind,
     n: opts.n,
     startedAt: now().toISOString(),
     endedAt: null,
@@ -470,6 +658,7 @@ export async function runBatch(
 
   let consecutiveDuds = 0;
   const dudRunIds: string[] = [];
+  const scenarioTree = snapshotTree(scenario.dir);
 
   try {
     for (const step of runOrder(opts.n, conditions)) {
@@ -482,6 +671,19 @@ export async function runBatch(
       );
       batch.runDirs.push(path.join("runs", record.runId));
       writeBatch();
+
+      const changed = diffTrees(scenarioTree, snapshotTree(scenario.dir));
+      if (changed.length > 0) {
+        throw new IsolationBreachError(
+          `Isolation breach in ${record.runId}: the scenario's own directory changed while the ` +
+            `agent ran (${changed.slice(0, 5).join("; ")}${changed.length > 5 ? "; ..." : ""}). ` +
+            `The agent reached outside its working copy, so it could also have read the check or ` +
+            `the frozen expectation. Aborting: no run from this batch can be trusted. ` +
+            `Restore ${scenario.dir} before re-running.`,
+          record.runId,
+          changed
+        );
+      }
 
       const analysis = analyzeTranscriptFile(
         path.join(batchDir, record.transcriptFile),
@@ -544,7 +746,9 @@ export async function runBatch(
   } catch (err) {
     batch.aborted = true;
     batch.abortReason =
-      err instanceof DudGuardError ? err.message : String((err as Error).message);
+      err instanceof DudGuardError || err instanceof IsolationBreachError
+        ? err.message
+        : String((err as Error).message);
     batch.endedAt = now().toISOString();
     writeBatch();
     throw err;

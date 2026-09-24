@@ -58,7 +58,14 @@ export interface ToolUnderTest {
   documentation?: ToolDocumentationMatchers;
 }
 
+/** Which coding agent runs the scenario. */
+export type AgentKind = "claude-code" | "opencode";
+
+export const AGENT_KINDS: AgentKind[] = ["claude-code", "opencode"];
+
 export interface AgentConfig {
+  /** Defaults to claude-code. The CLI's --agent overrides it. */
+  kind?: AgentKind;
   /** Pinned model id. Determinism beats convenience — always pin it. */
   model: string;
   maxTurns: number;
@@ -104,7 +111,7 @@ export interface ResolvedScenario extends ScenarioConfig {
 
 export interface CredentialInfo {
   /** Where the harness got the agent's credentials from. */
-  source: "config-file" | "env-api-key" | "oauth-token" | "none";
+  source: "config-file" | "env-api-key" | "oauth-token" | "provider-env" | "none";
   path?: string;
   /** Human-readable provenance for token auth, e.g. "$CLAUDE_CODE_OAUTH_TOKEN". */
   origin?: string;
@@ -129,6 +136,8 @@ export interface RunRecord {
   condition: Condition;
   index: number;
   model: string;
+  /** Absent in records written before a second agent was supported: claude-code. */
+  agentKind?: AgentKind;
   maxTurns: number;
   toolEnabled: boolean;
   startedAt: string;
@@ -141,7 +150,14 @@ export interface RunRecord {
   credential: CredentialInfo;
   argv: string[];
   envKeysStripped: string[];
+  /**
+   * The transcript metrics are computed from. For opencode this is normalized
+   * from the agent's own session store; `rawTranscriptFiles` are the originals.
+   */
   transcriptFile: string;
+  rawTranscriptFiles?: string[];
+  /** Set when the agent's own record of the run could not be exported. */
+  transcriptExportError?: string | null;
   stderrFile: string;
   checkFile: string;
   artifactDir: string | null;
@@ -173,6 +189,7 @@ export interface BatchRecord {
   scenarioConfigPath: string;
   scenarioSnapshot: ScenarioConfig;
   model: string;
+  agentKind?: AgentKind;
   n: number;
   startedAt: string;
   endedAt: string | null;
