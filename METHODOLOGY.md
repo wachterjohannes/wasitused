@@ -603,3 +603,59 @@ status. Most of a run looking like that is not something a working machine does.
 The prevention is duller than the detection: check free space on the temp
 filesystem before a battery and after it, because the thing that filled it was
 the previous battery's caches.
+
+## 20. The agent is a variable too
+
+A regression check compares today's tool against a number measured weeks ago.
+Between the two, the tool changed — and so did the agent running it. A coding
+agent's CLI updates on its own schedule, and each update can change how it
+plans, how often it double-checks, and how cheaply it does the task unaided.
+
+Measured here: five scenarios re-run on a new release of the tool, three weeks
+and about twenty agent versions after their anchors. Three of them tripped a
+pre-registered regression rule. A tool that saved 42% now saved 26%; one that
+cost 7% extra now cost 42%. Read against the anchors, that is a tool that got
+worse.
+
+It was not. The check that separated the two was cheap: run the **old fixture,
+unchanged**, on today's agent, with the tool, and put it beside the new fixture
+on the same day. The old tool on the new agent landed next to the new tool
+every time. The change had two sources, and neither was the tool: the new agent
+confirmed its answers more often with the tool available, and it solved the
+no-tool baseline 10–14% more cheaply. The second one alone shrinks any
+"the tool saves X%" figure, and it happens in the arm the tool never touches.
+
+So:
+
+- **Keep the old fixture runnable.** A drift control needs the exact artifact
+  the anchor ran on. If it has rotted (see below), the question can no longer be
+  asked.
+- **Compare arm to arm on the same day, not overhead to overhead across weeks.**
+  An overhead is a ratio of two things that both drift.
+- **Record the agent version with every number you quote.** "Saves 62%" is a
+  statement about a tool *and* an agent build. The next build is a different
+  measurement.
+- Register the drift control before you know which scenarios will need it, and
+  apply it to all of them, not only to the one that surprised you.
+
+## 21. A hardlinked fixture is only as frozen as the last in-place edit
+
+Building many fixtures from one base with hardlinks is cheap — ten 100MB
+fixtures for 100MB of disk — and it is the reason section 3's frozen
+expectations stay frozen only if nothing writes to the tree.
+
+Something always does. A build script that patches one scenario's copy of a
+file in place, without breaking the link first, rewrites the file under the
+base and every other fixture made from it — including fixtures whose batteries
+already ran. Three such edits were found here, weeks after the fact. None had
+changed a stored result, because each battery ran before the edit reached it.
+But a stored fixture re-run as a drift control crashed on every tool call: a
+patch meant for a different scenario had registered a class that fixture did
+not contain. Its agents spent a million tokens each repairing their own
+dependencies before anyone looked.
+
+The rule is mechanical: never edit a file in a hardlinked tree in place. Break
+the link first (copy over the link, then edit), or copy the tree. The guard is
+just as mechanical: have a build fail if a base file's contents changed while it
+ran, and record a checksum manifest of each fixture when its battery runs so a
+later re-run can prove it is re-running the same thing.
