@@ -706,3 +706,32 @@ ancestor. A harness whose temp root happens to sit under a directory like that
 leaks those into both conditions. So a batch now refuses to start when any
 ancestor of its temp root carries agent configuration.
 
+
+## 23. Isolating HOME can break the toolchain, in one condition only
+
+Giving each run its own HOME closes a real leak (section 22). It opens a quieter
+failure: any tool on the host that finds its own files through `$HOME` stops
+working inside the run. On the machine this was measured on, the language
+runtime the tasks needed was a two-line wrapper that exec'd a binary under
+`$HOME/.local/bin` and read its ini from `$HOME/.local/etc`. With a temp HOME the
+wrapper pointed at nothing.
+
+The damage landed on one condition. Every tool-arm run called the tool, the tool
+needed the runtime, and the call failed; the agents then spent a dozen turns
+hunting for a working interpreter — `which`, `find / -name ...`, trying paths by
+hand — and some found the real binary and finished. The no-tool arm solved the
+same task by searching text files and never needed the runtime at all. The result
+read as "with the tool, this agent takes 14 turns instead of 4". It was a
+statement about a wrapper script.
+
+It was visible in the data, which is the point of keeping it: the tool's call
+failure rate in that arm was far above anything the tool had shown before, and
+the failures all carried the same "No such file or directory" naming a path
+under the temp HOME. A failure rate that jumps between two setups of the same
+tool is a signal about the setup before it is one about the tool.
+
+Before trusting a run under a new isolation scheme, run the task's own toolchain
+inside that exact environment once and look at the output — not "does the agent
+start", but "does the interpreter the task needs start". The fix here was on the
+host (resolve the wrapper's paths from its own location), and it was not the
+harness's to make; the harness's job is to make the breakage impossible to miss.
