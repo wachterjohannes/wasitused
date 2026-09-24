@@ -39,7 +39,8 @@ export type Exclusion =
   | "dud-zero-cost"
   | "unparseable-transcript"
   | "missing-run-record"
-  | "broken-environment";
+  | "broken-environment"
+  | "sandbox-escape";
 
 export interface RunMetrics {
   runId: string;
@@ -96,7 +97,13 @@ export interface CostBlock {
 export interface ConditionMetrics {
   condition: Condition;
   runsAttempted: number;
-  excluded: { dudZeroCost: number; unparseableTranscript: number; missingRunRecord: number };
+  excluded: {
+    dudZeroCost: number;
+    unparseableTranscript: number;
+    missingRunRecord: number;
+    brokenEnvironment: number;
+    sandboxEscape: number;
+  };
   usable: number;
   adoption: Rate;
   /**
@@ -241,6 +248,27 @@ export function isBrokenEnvironment(analysis: {
   );
 }
 
+/**
+ * Did the scenario's own directory appear anywhere in the transcript?
+ *
+ * The agent works on a copy in a temp directory; the scenario directory holds
+ * the original fixture, the check and the frozen expectation. An agent that
+ * searched the whole disk, or resolved its project from an inherited PWD, can
+ * see all three. The path showing up in a tool input or a tool result is the
+ * evidence, whatever route led there.
+ */
+export function sawScenarioDir(transcriptFile: string, batch: BatchRecord): boolean {
+  const scenarioDir = path.dirname(path.resolve(batch.scenarioConfigPath));
+  let text: string;
+  try {
+    text = fs.readFileSync(transcriptFile, "utf8");
+  } catch {
+    return false;
+  }
+  // JSON escapes "/" only optionally; match both spellings.
+  return text.includes(scenarioDir) || text.includes(scenarioDir.replace(/\//g, "\\/"));
+}
+
 export function metricsForRun(
   batchDir: string,
   runDir: string,
@@ -303,6 +331,16 @@ export function metricsForRun(
     exclusion = "dud-zero-cost";
     exclusionReason =
       "the agent produced no billable tokens — nothing was measured in this run";
+  } else if (sawScenarioDir(path.resolve(batchDir, record.transcriptFile), batch)) {
+    exclusion = "sandbox-escape";
+    exclusionReason =
+      "the scenario's own directory — where the check and the frozen expectation live — " +
+      "appears in what the agent sent or received; its outcome cannot be trusted";
+  } else if (isBrokenEnvironment(analysis)) {
+    exclusion = "broken-environment";
+    exclusionReason =
+      `${analysis.shellSilentFailures} of ${analysis.shellCalls} shell calls returned no output ` +
+      "at all — the host, not the task, stopped the agent";
   }
 
   // An unreadable transcript means invocation cannot be established, so the
@@ -368,6 +406,8 @@ function conditionMetrics(
       ).length,
       missingRunRecord: attempted.filter((r) => r.exclusion === "missing-run-record")
         .length,
+      brokenEnvironment: attempted.filter((r) => r.exclusion === "broken-environment").length,
+      sandboxEscape: attempted.filter((r) => r.exclusion === "sandbox-escape").length,
     },
     usable: usable.length,
     adoption: rate(usable.filter((r) => r.invoked).length, usable.length),
@@ -502,7 +542,9 @@ export function computeBatchMetrics(batchDir: string): BatchMetrics {
       `${totalExcluded} of ${runs.length} runs were excluded as unusable ` +
         `(${runs.filter((r) => r.exclusion === "dud-zero-cost").length} zero-cost duds, ` +
         `${runs.filter((r) => r.exclusion === "unparseable-transcript").length} unparseable transcripts, ` +
-        `${runs.filter((r) => r.exclusion === "missing-run-record").length} missing run records). ` +
+        `${runs.filter((r) => r.exclusion === "missing-run-record").length} missing run records, ` +
+        `${runs.filter((r) => r.exclusion === "broken-environment").length} broken environments, ` +
+        `${runs.filter((r) => r.exclusion === "sandbox-escape").length} sandbox escapes). ` +
         "They are excluded from every rate below and are NOT counted as failures."
     );
   }

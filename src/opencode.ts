@@ -108,6 +108,12 @@ export function buildOpencodeConfig(input: OpencodeConfigInput): Record<string, 
     model: input.model,
     small_model: input.model,
     agent: { build: { steps: input.maxTurns } },
+    // --auto approves every permission not explicitly denied, including reads
+    // outside the project. Measured: an agent grepped "/" from its sandbox,
+    // which reaches the harness's own checks and expectations. Denied here, in
+    // both conditions; the harness also excludes any run that saw the scenario
+    // directory, whatever route it took.
+    permission: { external_directory: "deny" },
   };
   if (input.skillPaths.length > 0) config.skills = { paths: input.skillPaths };
   if (input.instructionFiles.length > 0) config.instructions = input.instructionFiles;

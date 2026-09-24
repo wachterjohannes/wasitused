@@ -604,6 +604,15 @@ The prevention is duller than the detection: check free space on the temp
 filesystem before a battery and after it, because the thing that filled it was
 the previous battery's caches.
 
+**Correction.** For two and a half weeks after this section was written, the
+exclusion it describes did not happen. The rule was implemented as a function,
+unit-tested in isolation, and never called from the metrics pass, so a
+broken-environment run still counted as a failed attempt. It surfaced while
+adding a different exclusion next to it. Section 11's rule applies to the
+harness's own fixes too: the test that proves a failure mode is handled has to
+go through the path a real batch takes, not only through the helper. Both
+exclusions now have end-to-end tests through `computeBatchMetrics`.
+
 ## 20. The agent is a variable too
 
 A regression check compares today's tool against a number measured weeks ago.
