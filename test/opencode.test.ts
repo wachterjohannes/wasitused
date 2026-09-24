@@ -456,3 +456,40 @@ describe("the working directory the agent sees", () => {
     assert.match(batch.abortReason, /isolation breach/i);
   });
 });
+
+describe("agent configuration in ancestor directories", () => {
+  test("a temp root below a directory with agent config is refused before anything is spent", async () => {
+    for (const marker of [".claude", "AGENTS.md", "CLAUDE.md"]) {
+      const root = scratch("ancestor");
+      const outer = path.join(root, "home-like");
+      const inner = path.join(outer, "tmp");
+      fs.mkdirSync(inner, { recursive: true });
+      // What was measured: opencode listed skills from a .claude/skills two levels up.
+      if (marker === ".claude") fs.mkdirSync(path.join(outer, ".claude", "skills"), { recursive: true });
+      else fs.writeFileSync(path.join(outer, marker), "operator instructions\n");
+      const scenario = makeScenarioDir(root);
+      let spawned = 0;
+      for (const agentKind of ["claude-code", "opencode"] as const) {
+        const err = await runBatch(scenario, {
+          n: 1,
+          outDir: path.join(root, "runs"),
+          credential: { kind: "file", path: path.join(root, "none.json") },
+          tmpRoot: inner,
+          agentKind,
+          spawnAgent: async () => {
+            spawned++;
+            return { exitCode: 0, signal: null, timedOut: false };
+          },
+          exportSessions: () => exportWithSubagent(),
+          log: () => {},
+        }).then(
+          () => null,
+          (e: unknown) => e
+        );
+        assert.ok(err instanceof Error, `${agentKind} / ${marker}`);
+        assert.match((err as Error).message, /ancestor/i);
+      }
+      assert.equal(spawned, 0);
+    }
+  });
+});

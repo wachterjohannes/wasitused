@@ -9,9 +9,11 @@
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
   prepareIsolatedRun,
+  findAncestorAgentConfig,
   inspectCredentials,
   stripInheritedAgentEnv,
   OAUTH_TOKEN_ENV,
@@ -600,6 +602,14 @@ export async function runBatch(
       ? inspectProviderEnv(opts.providerEnv ?? [])
       : inspectCredentials(opts.credential);
   log(`agent: ${agentKind}`);
+  const leaking = findAncestorAgentConfig(opts.tmpRoot ?? os.tmpdir());
+  if (leaking.length > 0) {
+    throw new Error(
+      `Refusing to run: agent configuration above the temp root would be read by every run, ` +
+        `in both conditions: ${leaking.join(", ")}. Agents load these from ancestor directories. ` +
+        `Point TMPDIR at a directory with no such ancestors.`
+    );
+  }
   if (agentKind === "opencode") {
     const missing = (opts.providerEnv ?? []).filter((n) => !process.env[n]);
     if (missing.length > 0) {

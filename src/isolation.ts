@@ -215,6 +215,43 @@ export function inspectCredentials(
   };
 }
 
+/**
+ * Files and directories coding agents pick up from *ancestors* of their
+ * working directory, not only from the directory itself.
+ *
+ * Claude Code loads every CLAUDE.md up the tree. opencode was measured to list
+ * skills from a `.claude/skills` two levels above the project, with its own
+ * HOME and config dirs isolated. A temp root inside a home directory therefore
+ * leaks the operator's instructions and skills into every run, in both
+ * conditions, and nothing in the output shows it.
+ */
+export const ANCESTOR_AGENT_CONFIG = [
+  "CLAUDE.md",
+  "CLAUDE.local.md",
+  "AGENTS.md",
+  ".claude",
+  ".agents",
+  ".opencode",
+  "opencode.json",
+  "opencode.jsonc",
+];
+
+/** Agent configuration visible from `dir` or any of its ancestors. */
+export function findAncestorAgentConfig(dir: string): string[] {
+  const found: string[] = [];
+  let current = path.resolve(dir);
+  for (;;) {
+    for (const name of ANCESTOR_AGENT_CONFIG) {
+      const candidate = path.join(current, name);
+      if (fs.existsSync(candidate)) found.push(candidate);
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return found;
+}
+
 export function copyDir(from: string, to: string): void {
   fs.mkdirSync(to, { recursive: true });
   fs.cpSync(from, to, { recursive: true, dereference: true });

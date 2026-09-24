@@ -688,3 +688,12 @@ caught by it; one that reaches the grader or the answer is.
 The general form: isolation is a claim about where the agent *could* go, and the
 agent decides that from more than one input. Check the outcome — did anything
 outside the sandbox change? — not only the mechanism you configured.
+
+The same run of probes found the other direction of the same mistake. An agent
+started in a temp directory inside a home directory listed the operator's own
+skills, although its HOME and config directories were both isolated: it walks
+up from the project and reads skill folders and instruction files from every
+ancestor. A harness whose temp root happens to sit under a directory like that
+leaks those into both conditions. So a batch now refuses to start when any
+ancestor of its temp root carries agent configuration.
+
