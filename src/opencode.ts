@@ -294,6 +294,8 @@ export function normalizeOpencodeExport(exp: OpencodeExport): string {
   let cost = 0;
   let assistantCount = 0;
   let lastError: string | null = null;
+  let lastErrorName: string | null = null;
+  let lastErrorStatus: number | null = null;
 
   for (const row of exp.messages) {
     const msg = parseData(row);
@@ -318,6 +320,8 @@ export function normalizeOpencodeExport(exp: OpencodeExport): string {
       const e = msg.error as Record<string, unknown>;
       const data = (e.data ?? {}) as Record<string, unknown>;
       lastError = String(data.message ?? e.name ?? "error");
+      lastErrorName = typeof e.name === "string" ? e.name : null;
+      lastErrorStatus = typeof data.statusCode === "number" ? data.statusCode : null;
     }
 
     const content: Record<string, unknown>[] = [];
@@ -373,6 +377,8 @@ export function normalizeOpencodeExport(exp: OpencodeExport): string {
         subtype: lastError ? "error" : "success",
         is_error: lastError !== null,
         ...(lastError ? { error: lastError } : {}),
+        ...(lastErrorName ? { error_name: lastErrorName } : {}),
+        ...(lastErrorStatus !== null ? { api_error_status: lastErrorStatus } : {}),
         usage: {
           input_tokens: total.input,
           output_tokens: total.output,

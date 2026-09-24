@@ -10,9 +10,11 @@
 
 import { strict as assert } from "node:assert";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { test, describe, after } from "node:test";
 import { computeBatchMetrics } from "../src/metrics";
-import { assistantLine, bashCall, initLine, makeBatchDir, resultLine, tmpDir, transcript } from "./helpers";
+import { ProviderLimitError, runBatch } from "../src/runner";
+import { assistantLine, bashCall, initLine, makeBatchDir, makeScenarioDir, resultLine, tmpDir, transcript } from "./helpers";
 
 const created: string[] = [];
 function scratch(name: string): string {
@@ -90,5 +92,75 @@ describe("sandbox-escape exclusion", () => {
     assert.equal(escaped?.exclusion, "sandbox-escape");
     assert.equal(m.conditions.with_tool.excluded.sandboxEscape, 1);
     assert.equal(m.runs.find((r) => r.runId === "baseline-001")?.usable, true);
+  });
+});
+
+describe("provider-error exclusion", () => {
+  const capped = JSON.stringify({
+    type: "result",
+    subtype: "error",
+    is_error: true,
+    error: "you have reached your session usage limit, upgrade for higher limits",
+    error_name: "APIError",
+    api_error_status: 429,
+    usage: { input_tokens: 30000, output_tokens: 300, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    total_cost_usd: 0.005,
+  });
+
+  test("a run the provider cut off is excluded, not counted as an unsolved attempt", () => {
+    const root = scratch("provider");
+    const cut = transcript([initLine(), assistantLine("m1", { input_tokens: 30000, output_tokens: 300 }), capped]);
+    const clean = transcript([initLine(), assistantLine("m1", { input_tokens: 1000, output_tokens: 10 }), resultLine()]);
+    const dir = makeBatchDir(root, [
+      { condition: "with_tool", index: 1, transcript: cut, check: { solved: false } },
+      { condition: "baseline", index: 1, transcript: clean, check: { solved: true } },
+    ]);
+    const m = computeBatchMetrics(dir);
+    assert.equal(m.runs.find((r) => r.runId === "with_tool-001")?.exclusion, "provider-error");
+    assert.equal(m.conditions.with_tool.excluded.providerError, 1);
+    assert.equal(m.efficacy.withToolAll.n, 0);
+  });
+
+  test("running out of turns is the model's failure and stays counted", () => {
+    const root = scratch("maxturns");
+    const maxTurns = JSON.stringify({
+      type: "result",
+      subtype: "error_max_turns",
+      is_error: true,
+      usage: { input_tokens: 90000, output_tokens: 900, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      total_cost_usd: 0.3,
+    });
+    const dir = makeBatchDir(root, [
+      { condition: "with_tool", index: 1, transcript: transcript([initLine(), assistantLine("m1", { input_tokens: 90000, output_tokens: 900 }), maxTurns]), check: { solved: false } },
+      { condition: "baseline", index: 1, transcript: transcript([initLine(), assistantLine("m1", { input_tokens: 1000, output_tokens: 10 }), resultLine()]), check: { solved: true } },
+    ]);
+    const m = computeBatchMetrics(dir);
+    const r = m.runs.find((x) => x.runId === "with_tool-001");
+    assert.equal(r?.usable, true);
+    assert.equal(r?.solved, false);
+  });
+
+  test("the batch stops at the first capped run instead of burning through the rest", async () => {
+    const root = scratch("provider-abort");
+    const scenario = makeScenarioDir(root);
+    let runs = 0;
+    const err = await runBatch(scenario, {
+      n: 5,
+      outDir: path.join(root, "runs"),
+      credential: { kind: "file", path: path.join(root, "none.json") },
+      tmpRoot: root,
+      spawnAgent: async (req) => {
+        runs++;
+        fs.writeFileSync(req.transcriptFile, transcript([initLine(), assistantLine(`m${runs}`, { input_tokens: 30000, output_tokens: 300 }), capped]));
+        fs.writeFileSync(req.stderrFile, "");
+        return { exitCode: 1, signal: null, timedOut: false };
+      },
+      log: () => {},
+    }).then(
+      () => null,
+      (e: unknown) => e
+    );
+    assert.ok(err instanceof ProviderLimitError);
+    assert.equal(runs, 1);
   });
 });

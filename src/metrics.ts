@@ -31,7 +31,7 @@ import {
   type Rate,
   type Summary,
 } from "./stats";
-import { analyzeTranscriptFile } from "./transcript";
+import { analyzeTranscriptFile, isProviderFailure } from "./transcript";
 import type { BatchRecord, CheckRecord, Condition, RunRecord } from "./types";
 import { CONDITIONS } from "./types";
 
@@ -40,7 +40,8 @@ export type Exclusion =
   | "unparseable-transcript"
   | "missing-run-record"
   | "broken-environment"
-  | "sandbox-escape";
+  | "sandbox-escape"
+  | "provider-error";
 
 export interface RunMetrics {
   runId: string;
@@ -103,6 +104,7 @@ export interface ConditionMetrics {
     missingRunRecord: number;
     brokenEnvironment: number;
     sandboxEscape: number;
+    providerError: number;
   };
   usable: number;
   adoption: Rate;
@@ -331,6 +333,12 @@ export function metricsForRun(
     exclusion = "dud-zero-cost";
     exclusionReason =
       "the agent produced no billable tokens — nothing was measured in this run";
+  } else if (isProviderFailure(analysis)) {
+    exclusion = "provider-error";
+    exclusionReason =
+      `the model provider ended the run (${
+        analysis.resultApiErrorStatus ?? "error"
+      }: ${String(analysis.resultError ?? "").slice(0, 160)}) — a quota or outage, not the task`;
   } else if (sawScenarioDir(path.resolve(batchDir, record.transcriptFile), batch)) {
     exclusion = "sandbox-escape";
     exclusionReason =
@@ -408,6 +416,7 @@ function conditionMetrics(
         .length,
       brokenEnvironment: attempted.filter((r) => r.exclusion === "broken-environment").length,
       sandboxEscape: attempted.filter((r) => r.exclusion === "sandbox-escape").length,
+      providerError: attempted.filter((r) => r.exclusion === "provider-error").length,
     },
     usable: usable.length,
     adoption: rate(usable.filter((r) => r.invoked).length, usable.length),
@@ -544,7 +553,8 @@ export function computeBatchMetrics(batchDir: string): BatchMetrics {
         `${runs.filter((r) => r.exclusion === "unparseable-transcript").length} unparseable transcripts, ` +
         `${runs.filter((r) => r.exclusion === "missing-run-record").length} missing run records, ` +
         `${runs.filter((r) => r.exclusion === "broken-environment").length} broken environments, ` +
-        `${runs.filter((r) => r.exclusion === "sandbox-escape").length} sandbox escapes). ` +
+        `${runs.filter((r) => r.exclusion === "sandbox-escape").length} sandbox escapes, ` +
+        `${runs.filter((r) => r.exclusion === "provider-error").length} provider errors). ` +
         "They are excluded from every rate below and are NOT counted as failures."
     );
   }

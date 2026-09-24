@@ -30,7 +30,7 @@ import {
   writeOpencodeConfig,
 } from "./opencode";
 import { bestEffortUsd } from "./pricing";
-import { analyzeTranscriptFile } from "./transcript";
+import { analyzeTranscriptFile, isProviderLimit } from "./transcript";
 import type {
   AgentKind,
   BatchRecord,
@@ -111,6 +111,16 @@ export const spawnClaudeAgent: SpawnAgentFn = (req) =>
       stderr.end(done);
     });
   });
+
+export class ProviderLimitError extends Error {
+  constructor(
+    message: string,
+    public readonly runId: string
+  ) {
+    super(message);
+    this.name = "ProviderLimitError";
+  }
+}
 
 export class IsolationBreachError extends Error {
   constructor(
@@ -726,6 +736,16 @@ export async function runBatch(
         }
       }
 
+      if (isProviderLimit(analysis)) {
+        throw new ProviderLimitError(
+          `Provider limit in ${record.runId}: ${String(analysis.resultError ?? "").slice(0, 200)} ` +
+            `(status ${analysis.resultApiErrorStatus ?? "unknown"}). The run is excluded as a ` +
+            `provider error; the batch stops here, because every further run would hit the same ` +
+            `cap and be excluded too. Resume once the limit has reset.`,
+          record.runId
+        );
+      }
+
       if (zeroCost) {
         consecutiveDuds++;
         dudRunIds.push(record.runId);
@@ -756,7 +776,9 @@ export async function runBatch(
   } catch (err) {
     batch.aborted = true;
     batch.abortReason =
-      err instanceof DudGuardError || err instanceof IsolationBreachError
+      err instanceof DudGuardError ||
+      err instanceof IsolationBreachError ||
+      err instanceof ProviderLimitError
         ? err.message
         : String((err as Error).message);
     batch.endedAt = now().toISOString();

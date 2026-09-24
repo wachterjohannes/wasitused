@@ -81,6 +81,14 @@ export interface TranscriptAnalysis {
   reportedCostUsd: number | null;
   resultSubtype: string | null;
   resultIsError: boolean | null;
+  /** The agent's own error text on its terminal line, when it failed. */
+  resultError: string | null;
+  /**
+   * HTTP status of a provider/API failure that ended the run, when the agent
+   * reports one. Set only for failures of the model provider, never for a task
+   * the model attempted and got wrong.
+   */
+  resultApiErrorStatus: number | null;
   /**
    * Shell calls the agent made, and how many came back with nothing at all.
    *
@@ -296,6 +304,8 @@ export function analyzeTranscriptText(
   let complete = false;
   let resultSubtype: string | null = null;
   let resultIsError: boolean | null = null;
+  let resultError: string | null = null;
+  let resultApiErrorStatus: number | null = null;
   let reportedTotals: TokenTotals | null = null;
   let reportedCostUsd: number | null = null;
 
@@ -405,6 +415,14 @@ export function analyzeTranscriptText(
       reportedTotals = readUsage(obj.usage as Record<string, unknown> | undefined);
       reportedCostUsd =
         typeof obj.total_cost_usd === "number" ? obj.total_cost_usd : null;
+      resultError =
+        typeof obj.error === "string"
+          ? obj.error
+          : resultIsError && typeof obj.result === "string"
+            ? obj.result
+            : null;
+      resultApiErrorStatus =
+        typeof obj.api_error_status === "number" ? obj.api_error_status : null;
     }
   }
 
@@ -458,6 +476,8 @@ export function analyzeTranscriptText(
     reportedCostUsd,
     resultSubtype,
     resultIsError,
+    resultError,
+    resultApiErrorStatus,
     shellCalls: shellCallIds.size,
     shellSilentFailures,
     events,
@@ -469,6 +489,36 @@ export function analyzeTranscriptText(
     invoked: invocationCount > 0,
     readDocs: documentationCount > 0,
   };
+}
+
+/**
+ * The run was ended by the model provider — a usage cap, a rate limit, an
+ * outage — rather than by the model finishing or failing the task. Such a run
+ * measured the provider's quota, not the tool, and counting it as an unsolved
+ * attempt would load the failure onto whichever condition ran when the cap hit.
+ */
+export function isProviderFailure(a: {
+  resultIsError: boolean | null;
+  resultApiErrorStatus: number | null;
+  resultError: string | null;
+}): boolean {
+  if (a.resultIsError !== true) return false;
+  if (a.resultApiErrorStatus !== null) return true;
+  return /usage limit|rate limit|quota|too many requests|overloaded|credit/i.test(a.resultError ?? "");
+}
+
+/** A provider failure that will recur on the next run: a cap, not a blip. */
+export function isProviderLimit(a: {
+  resultIsError: boolean | null;
+  resultApiErrorStatus: number | null;
+  resultError: string | null;
+}): boolean {
+  if (!isProviderFailure(a)) return false;
+  return (
+    a.resultApiErrorStatus === 429 ||
+    a.resultApiErrorStatus === 402 ||
+    /usage limit|rate limit|quota|credit/i.test(a.resultError ?? "")
+  );
 }
 
 export function analyzeTranscriptFile(
@@ -498,6 +548,8 @@ export function analyzeTranscriptFile(
       reportedCostUsd: null,
       resultSubtype: null,
       resultIsError: null,
+      resultError: null,
+      resultApiErrorStatus: null,
       events: [],
       invocationCount: 0,
       invocationFailures: 0,
